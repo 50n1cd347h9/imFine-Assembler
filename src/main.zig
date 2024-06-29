@@ -9,9 +9,16 @@ const eql = std.mem.eql;
 const ArrayList = std.ArrayList;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
+// the order is matter
 const instructions = [_][]const u8{ "push", "pop", "add", "sub", "mul", "div", "and", "or", "xor", "shl", "ldr", "ldm", "cmp", "jmp", "jg", "jz", "jl", "nop" };
-
-const registers = [_][]const u8{ "ip", "sp", "fp", "gr0", "gr1", "flag" };
+const registers = [_][]const u8{
+    "ip",
+    "sp",
+    "fp",
+    "flag",
+    "gr0",
+    "gr1",
+};
 
 const ImFineAssembly = struct {
     source_file: std.fs.File,
