@@ -362,7 +362,6 @@ const ImFineAssembly = struct {
             }
 
             try self.out_buf.appendSlice(buf[0..index]);
-            //            print("{!}\n", .{code});
         }
     }
 
@@ -437,13 +436,16 @@ pub fn main() !void {
     var hoge: ImFineAssembly = undefined;
     hoge.init(allocator) catch |err| {
         print("err = {!}\n", .{err});
+        return;
     };
 
     hoge.parseArgs(&args) catch |err| {
         print("err = {!}\n", .{err});
+        return;
     };
 
     hoge.assemble() catch |err| {
         print("err = {!}\n", .{err});
+        return;
     };
 }

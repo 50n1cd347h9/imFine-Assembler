@@ -1,7 +1,7 @@
-ld [gr0], 0x10
-pop gr0
+ld gr0, 0x1000
+shl gr0, 2
+push gr0
+pop gr1
 push gr1
-ld gr0, [gr0]
-ld gr1, 0x100
-ld [gr1], [gr0]
-;ld [gr1]  [gr0]
+sub gr1, 4
+div gr1, 3
