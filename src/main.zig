@@ -41,6 +41,8 @@ fn toInt(buf: []const u8) u128 {
 }
 
 const ImFineAssembly = struct {
+    src_name: []u8,
+    dst_name: []u8,
     src_file: std.fs.File,
     dst_file: std.fs.File,
     input_reader: std.fs.File.Reader,
@@ -49,6 +51,7 @@ const ImFineAssembly = struct {
     token: Token,
     curr_line_code: Code,
     codes: ArrayList(Code),
+    out_buf: ArrayList(u8),
 
     const COMMA: u8 = ',';
     const SEMICOLON: u8 = ';';
@@ -65,6 +68,8 @@ const ImFineAssembly = struct {
     var begin_idx: u32 = 0;
     var curr_idx: u32 = 0;
     var allocator: std.mem.Allocator = undefined;
+    const filename_len = 0x50;
+    var file_name_buf: [filename_len * 2]u8 = undefined;
 
     // the order is matter
     // ldr, ldm
@@ -80,6 +85,11 @@ const ImFineAssembly = struct {
 
     const SyntaxError = error{
         CommaNeeded,
+    };
+
+    const ArgError = error{
+        FileNotFound,
+        TooFewArgs,
     };
     const Token = enum {
         Register,
@@ -116,6 +126,50 @@ const ImFineAssembly = struct {
             str_BC_map[instructions.len + i].name = register;
             str_BC_map[instructions.len + i].bc = @as(u8, @intCast(i));
         }
+
+        @memset(&file_name_buf, 0);
+    }
+
+    // *const [][:0]u8 = pointer to an array of zero terminated const u8 values
+    fn parseArgs(self: *ImFineAssembly, args_p: *const [][:0]u8) !void {
+        if (args_p.len < 2) {
+            return ArgError.TooFewArgs;
+        }
+
+        // for (args_p.*, 0..) |arg, i| {
+        //     _ = i;
+        // }
+        copyForwards(u8, &file_name_buf, args_p.*[1]);
+        self.asignOutputName();
+    }
+
+    fn asignOutputName(self: *ImFineAssembly) void {
+        const extension = [4:0]u8{ '.', 'b', 'i', 'n' };
+
+        const src_len = for (0..file_name_buf.len) |i| {
+            if (file_name_buf[i] == EOL) {
+                break @as(u8, @intCast(i));
+            }
+        } else blk: {
+            break :blk @as(u8, @intCast(file_name_buf.len));
+        };
+
+        self.src_name = file_name_buf[0..src_len];
+
+        const dst_len = for (0..src_len) |i| {
+            if (file_name_buf[i] == '.') {
+                break @as(u8, @intCast(i + extension.len));
+            }
+            file_name_buf[src_len + i] = self.src_name[i];
+        } else blk: {
+            break :blk @as(u8, @intCast(src_len + extension.len));
+        };
+
+        for (extension, 0..) |char, j| {
+            file_name_buf[src_len + dst_len - extension.len + j] = char;
+        }
+
+        self.dst_name = file_name_buf[src_len .. src_len + dst_len];
     }
 
     fn emptyCode() Code {
@@ -286,8 +340,6 @@ const ImFineAssembly = struct {
 
     fn toBinary(self: *ImFineAssembly) !void {
         var buf: [0x50]u8 = undefined;
-        var out_buf = ArrayList(u8).init(allocator);
-        defer out_buf.deinit();
 
         for (self.codes.allocatedSlice()[0..self.codes.items.len]) |*code| {
             var index: u8 = 2;
@@ -309,11 +361,9 @@ const ImFineAssembly = struct {
                 index += 1;
             }
 
-            try out_buf.appendSlice(buf[0..index]);
-            print("{!}\n", .{code});
+            try self.out_buf.appendSlice(buf[0..index]);
+            //            print("{!}\n", .{code});
         }
-        stdout.print("{s}\n", .{out_buf.items}) catch unreachable;
-        //            self.output_writer.write(code.opcode << 5 | code.first_oprand << 2 | code.padding);
     }
 
     fn nextLine(self: *ImFineAssembly) ?[]const u8 {
@@ -331,13 +381,13 @@ const ImFineAssembly = struct {
         }
     }
 
-    fn assemble(self: *ImFineAssembly, file_name: []const u8) !void {
+    fn assemble(self: *ImFineAssembly) !void {
         self.src_file = try fs.cwd().openFile(
-            file_name,
+            self.src_name,
             .{ .mode = .read_only },
         );
         self.dst_file = try fs.cwd().createFile(
-            "hoge.bin",
+            self.dst_name,
             .{},
         );
         defer self.src_file.close();
@@ -346,6 +396,8 @@ const ImFineAssembly = struct {
         self.output_writer = self.dst_file.writer();
         self.codes = ArrayList(Code).init(allocator);
         defer self.codes.deinit();
+        self.out_buf = ArrayList(u8).init(allocator);
+        defer self.out_buf.deinit();
 
         line: while (self.nextLine() != null) {
             curr_idx = 0;
@@ -369,35 +421,13 @@ const ImFineAssembly = struct {
         }
 
         try self.toBinary();
+        try self.output_writer.writeAll(self.out_buf.items);
     }
 };
-
-// *const [][:0]u8 = pointer to an array of zero terminated const u8 values
-// fn parseArgs(args_p: *const [][:0]u8) ?void {
-//     if (args_p.len < 2) {
-//         return null;
-//     }
-//
-//     for (args_p.*, 0..) |arg, i| {
-//         if (eql(u8, arg, "-i")) {
-//             return interactiveAsm();
-//         } else if (eql(u8, arg, "-o")) {
-//             const output_name: []u8 = args_p[i + 1];
-//             return assemble(output_name);
-//         } else {
-//             continue;
-//         }
-//     }
-//
-//     return 0;
-// }
 
 pub fn main() !void {
     const args = try process.argsAlloc(std.heap.page_allocator);
     defer process.argsFree(std.heap.page_allocator, args);
-
-    const filename = "test.asm";
-
     const allocator = gpa.allocator();
     defer {
         const deinit_status = gpa.deinit();
@@ -408,8 +438,12 @@ pub fn main() !void {
     hoge.init(allocator) catch |err| {
         print("err = {!}\n", .{err});
     };
-    hoge.assemble(filename) catch |err| {
+
+    hoge.parseArgs(&args) catch |err| {
         print("err = {!}\n", .{err});
     };
-    //_ = parseArgs(&args);
+
+    hoge.assemble() catch |err| {
+        print("err = {!}\n", .{err});
+    };
 }
