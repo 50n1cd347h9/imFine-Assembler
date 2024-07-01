@@ -85,6 +85,7 @@ const ImFineAssembly = struct {
 
     const SyntaxError = error{
         CommaNeeded,
+        CloseSquareBracketNeeded,
     };
 
     const ArgError = error{
@@ -247,27 +248,38 @@ const ImFineAssembly = struct {
         }
     }
 
-    fn nextChar(buf: []u8) u8 {
-        return buf[0];
+    fn nextChar(buf: []u8) ?u8 {
+        const char = buf[1];
+        switch (char) {
+            EOL => return null,
+            else => return char,
+        }
     }
 
-    fn nextToken(self: *ImFineAssembly) !Token {
+    fn nextToken(self: *ImFineAssembly) !?Token {
         defer {
             begin_idx = curr_idx;
         }
         const buf_end = self.line_buffer.len;
         for (self.line_buffer[begin_idx..buf_end], 0..) |char, i| {
+            if (char == '\n')
+                print("char/{c}/\n", .{char});
             switch (char) {
-                SEMICOLON, EOL => return Token.InvalidToken,
+                SEMICOLON, EOL => return null,
                 SPACE, COMMA => continue,
                 SQUARE_BRACKET_OPEN => {
                     begin_idx += @as(u32, @intCast(i));
                     curr_idx = begin_idx;
 
-                    // TODO: if close not found;
-                    while (nextChar(self.line_buffer[curr_idx..buf_end]) != SQUARE_BRACKET_CLOSE)
+                    while (nextChar(self.line_buffer[curr_idx..buf_end])) |next| {
                         curr_idx += 1;
-                    curr_idx += 1;
+                        if (next == SQUARE_BRACKET_CLOSE) {
+                            curr_idx += 1;
+                            break;
+                        }
+                    } else {
+                        return SyntaxError.CloseSquareBracketNeeded;
+                    }
 
                     const inner_str = self.line_buffer[begin_idx + 1 .. curr_idx - 1];
                     const token_type: Token = switch (getTokenType(inner_str)) {
@@ -301,7 +313,11 @@ const ImFineAssembly = struct {
                     begin_idx += @as(u32, @intCast(i));
                     curr_idx = begin_idx;
 
-                    while (isLetterOrDigit(nextChar(self.line_buffer[curr_idx..buf_end]))) {
+                    while (nextChar(self.line_buffer[curr_idx..buf_end])) |next| {
+                        curr_idx += 1;
+                        if (!isLetterOrDigit(next))
+                            break;
+                    } else {
                         curr_idx += 1;
                     }
 
@@ -365,19 +381,18 @@ const ImFineAssembly = struct {
         }
     }
 
-    fn nextLine(self: *ImFineAssembly) ?[]const u8 {
+    fn nextLine(self: *ImFineAssembly) !?[]u8 {
         @memset(&self.line_buffer, 0);
-        _ = self.input_reader.readUntilDelimiterOrEof(
+        const line = try self.input_reader.readUntilDelimiterOrEof(
             &self.line_buffer,
             '\n',
-        ) catch null;
-        std.mem.replaceScalar(u8, &self.line_buffer, '\n', '\x00');
-
-        if (@import("builtin").os.tag == .windows) {
-            return std.mem.trimRight(u8, self.line_buffer, "\r");
-        } else {
-            return &self.line_buffer;
-        }
+        );
+        if (line == null)
+            return line;
+        if (@import("builtin").os.tag == .windows)
+            std.mem.trimRight(u8, self.line_buffer, "\r");
+        // skip empty line
+        return if (line.?.len == 0) self.nextLine() else line;
     }
 
     fn assemble(self: *ImFineAssembly) !void {
@@ -385,41 +400,44 @@ const ImFineAssembly = struct {
             self.src_name,
             .{ .mode = .read_only },
         );
-        self.dst_file = try fs.cwd().createFile(
-            self.dst_name,
-            .{},
-        );
         defer self.src_file.close();
-        defer self.dst_file.close();
         self.input_reader = self.src_file.reader();
-        self.output_writer = self.dst_file.writer();
         self.codes = ArrayList(Code).init(allocator);
         defer self.codes.deinit();
-        self.out_buf = ArrayList(u8).init(allocator);
-        defer self.out_buf.deinit();
 
-        line: while (self.nextLine() != null) {
+        line: while (try self.nextLine()) |line| {
             curr_idx = 0;
             begin_idx = 0;
             self.curr_line_code = emptyCode();
 
-            token: while (true) {
-                self.token = try self.nextToken();
+            while (try self.nextToken()) |hoge| {
+                self.token = hoge;
                 switch (self.token) {
                     Token.Opcode => continue,
                     Token.Register => continue,
                     Token.Imm => continue,
-                    Token.InvalidToken => if (begin_idx == 0) {
-                        break :line;
-                    } else {
-                        try self.codes.append(self.curr_line_code);
-                        break :token;
-                    },
+                    Token.InvalidToken => break :line,
                 }
             }
+
+            if (true) {
+                try stdout.print("{s}\n", .{line});
+                try stdout.print("{!}\n\n", .{self.curr_line_code});
+            }
+
+            try self.codes.append(self.curr_line_code);
         }
 
+        self.out_buf = ArrayList(u8).init(allocator);
+        defer self.out_buf.deinit();
         try self.toBinary();
+
+        self.dst_file = try fs.cwd().createFile(
+            self.dst_name,
+            .{},
+        );
+        defer self.dst_file.close();
+        self.output_writer = self.dst_file.writer();
         try self.output_writer.writeAll(self.out_buf.items);
     }
 };
@@ -435,17 +453,17 @@ pub fn main() !void {
 
     var hoge: ImFineAssembly = undefined;
     hoge.init(allocator) catch |err| {
-        print("err = {!}\n", .{err});
+        print("{!}\n", .{err});
         return;
     };
 
     hoge.parseArgs(&args) catch |err| {
-        print("err = {!}\n", .{err});
+        print("{!}\n", .{err});
         return;
     };
 
     hoge.assemble() catch |err| {
-        print("err = {!}\n", .{err});
+        print("{!}\n", .{err});
         return;
     };
 }
