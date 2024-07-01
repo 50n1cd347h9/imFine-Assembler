@@ -49,6 +49,7 @@ const ImFineAssembly = struct {
     output_writer: std.fs.File.Writer,
     line_buffer: [0x100]u8,
     token: Token,
+    tokens: [][]u8,
     curr_line_code: Code,
     codes: ArrayList(Code),
     out_buf: ArrayList(u8),
@@ -96,6 +97,8 @@ const ImFineAssembly = struct {
         Register,
         Opcode,
         Imm,
+        ImmRef,
+        RegRef,
         InvalidToken,
     };
     const StrBc = struct {
@@ -249,21 +252,19 @@ const ImFineAssembly = struct {
     }
 
     fn nextChar(buf: []u8) ?u8 {
-        const char = buf[1];
-        switch (char) {
-            EOL => return null,
-            else => return char,
-        }
+        const char = if (buf.len > 1) buf[1] else null;
+        return char;
     }
 
-    fn nextToken(self: *ImFineAssembly) !?Token {
+    fn nextToken(self: *ImFineAssembly, line: []u8) !?Token {
+        const buf_end = line.len;
+        var token_str: []u8 = undefined;
+        var token_type: Token = undefined;
         defer {
             begin_idx = curr_idx;
         }
-        const buf_end = self.line_buffer.len;
-        for (self.line_buffer[begin_idx..buf_end], 0..) |char, i| {
-            if (char == '\n')
-                print("char/{c}/\n", .{char});
+
+        for (line[begin_idx..buf_end], 0..) |char, i| {
             switch (char) {
                 SEMICOLON, EOL => return null,
                 SPACE, COMMA => continue,
@@ -271,7 +272,7 @@ const ImFineAssembly = struct {
                     begin_idx += @as(u32, @intCast(i));
                     curr_idx = begin_idx;
 
-                    while (nextChar(self.line_buffer[curr_idx..buf_end])) |next| {
+                    while (nextChar(line[curr_idx..buf_end])) |next| {
                         curr_idx += 1;
                         if (next == SQUARE_BRACKET_CLOSE) {
                             curr_idx += 1;
@@ -281,24 +282,24 @@ const ImFineAssembly = struct {
                         return SyntaxError.CloseSquareBracketNeeded;
                     }
 
-                    const inner_str = self.line_buffer[begin_idx + 1 .. curr_idx - 1];
-                    const token_type: Token = switch (getTokenType(inner_str)) {
+                    token_str = line[begin_idx + 1 .. curr_idx - 1];
+                    token_type = switch (getTokenType(token_str)) {
                         Token.Register => |res| blk: {
                             // if opcode ld (ldm)
                             if (self.token == Token.Opcode) {
                                 self.curr_line_code.opcode += 1;
-                                self.curr_line_code.first_oprand = getBc(&str_BC_map, inner_str);
+                                self.curr_line_code.first_oprand = getBc(&str_BC_map, token_str);
                             } else {
-                                if (!hasComma(self.line_buffer[0..begin_idx]) and self.token != Token.Opcode)
+                                if (!hasComma(line[0..begin_idx]) and self.token != Token.Opcode)
                                     return SyntaxError.CommaNeeded;
-                                self.curr_line_code.second_oprand = getBc(&str_BC_map, inner_str);
+                                self.curr_line_code.second_oprand = getBc(&str_BC_map, token_str);
                                 self.curr_line_code.ext = BC_reg_ref;
                             }
                             break :blk res;
                         },
                         Token.Imm => |res| blk: {
-                            const int_num = toInt(inner_str);
-                            if (!hasComma(self.line_buffer[0..begin_idx]) and self.token != Token.Opcode)
+                            const int_num = toInt(token_str);
+                            if (!hasComma(line[0..begin_idx]) and self.token != Token.Opcode)
                                 return SyntaxError.CommaNeeded;
                             self.curr_line_code.second_oprand = int_num;
                             self.curr_line_code.ext = BC_imm_ref;
@@ -313,7 +314,7 @@ const ImFineAssembly = struct {
                     begin_idx += @as(u32, @intCast(i));
                     curr_idx = begin_idx;
 
-                    while (nextChar(self.line_buffer[curr_idx..buf_end])) |next| {
+                    while (nextChar(line[curr_idx..buf_end])) |next| {
                         curr_idx += 1;
                         if (!isLetterOrDigit(next))
                             break;
@@ -321,17 +322,17 @@ const ImFineAssembly = struct {
                         curr_idx += 1;
                     }
 
-                    const token_str = self.line_buffer[begin_idx..curr_idx];
-                    const token_type: Token = switch (getTokenType(token_str)) {
+                    token_str = line[begin_idx..curr_idx];
+                    token_type = switch (getTokenType(token_str)) {
                         Token.Opcode => |res| blk: {
                             self.curr_line_code.opcode = getBc(&str_BC_map, token_str);
                             break :blk res;
                         },
                         Token.Register => |res| blk: {
-                            if (hasComma(self.line_buffer[begin_idx..buf_end])) {
+                            if (hasComma(line[begin_idx..buf_end])) {
                                 self.curr_line_code.first_oprand = getBc(&str_BC_map, token_str);
                             } else {
-                                if (!hasComma(self.line_buffer[0..begin_idx]) and self.token != Token.Opcode)
+                                if (!hasComma(line[0..begin_idx]) and self.token != Token.Opcode)
                                     return SyntaxError.CommaNeeded;
                                 self.curr_line_code.second_oprand = getBc(&str_BC_map, token_str);
                                 self.curr_line_code.ext = BC_reg;
@@ -347,11 +348,13 @@ const ImFineAssembly = struct {
                         else => Token.InvalidToken,
                     };
 
+                    print("{s}\n", .{token_str});
                     return token_type;
                 },
             }
         }
-        return Token.InvalidToken;
+
+        return null;
     }
 
     fn toBinary(self: *ImFineAssembly) !void {
@@ -410,7 +413,7 @@ const ImFineAssembly = struct {
             begin_idx = 0;
             self.curr_line_code = emptyCode();
 
-            while (try self.nextToken()) |hoge| {
+            while (try self.nextToken(line)) |hoge| {
                 self.token = hoge;
                 switch (self.token) {
                     Token.Opcode => continue,
