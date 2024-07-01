@@ -48,8 +48,7 @@ const ImFineAssembly = struct {
     input_reader: std.fs.File.Reader,
     output_writer: std.fs.File.Writer,
     line_buffer: [0x100]u8,
-    token: Token,
-    tokens: [][]u8,
+    tokens: ArrayList([]u8),
     curr_line_code: Code,
     codes: ArrayList(Code),
     out_buf: ArrayList(u8),
@@ -86,6 +85,7 @@ const ImFineAssembly = struct {
 
     const SyntaxError = error{
         CommaNeeded,
+        OpenSquareBracketNeeded,
         CloseSquareBracketNeeded,
     };
 
@@ -97,8 +97,6 @@ const ImFineAssembly = struct {
         Register,
         Opcode,
         Imm,
-        ImmRef,
-        RegRef,
         InvalidToken,
     };
     const StrBc = struct {
@@ -228,17 +226,6 @@ const ImFineAssembly = struct {
         return false;
     }
 
-    fn hasComma(buf: []const u8) bool {
-        for (buf) |char| {
-            switch (char) {
-                SEMICOLON => return false,
-                COMMA => return true,
-                else => continue,
-            }
-        }
-        return false;
-    }
-
     fn getTokenType(buf: []const u8) Token {
         if (isOpcode(buf)) {
             return Token.Opcode;
@@ -256,20 +243,77 @@ const ImFineAssembly = struct {
         return char;
     }
 
-    fn nextToken(self: *ImFineAssembly, line: []u8) !?Token {
-        const buf_end = line.len;
-        var token_str: []u8 = undefined;
-        var token_type: Token = undefined;
-        defer {
-            begin_idx = curr_idx;
+    fn parse(self: *ImFineAssembly) !void {
+        var curr_token_type: Token = undefined;
+        var prev_token_type: Token = undefined;
+        const tokens_sum = self.tokens.items.len;
+
+        for (self.tokens.items) |token| {
+            curr_token_type = getTokenType(token);
+
+            switch (curr_token_type) {
+                Token.Opcode => self.curr_line_code.opcode = getBc(&str_BC_map, token),
+                Token.Register => {
+                    if (tokens_sum == 3) {
+                        self.curr_line_code.first_oprand = getBc(&str_BC_map, token);
+                    } else {
+                        self.curr_line_code.second_oprand = getBc(&str_BC_map, token);
+                        self.curr_line_code.ext = BC_reg;
+                    }
+                },
+                Token.Imm => {
+                    const int_num = toInt(token);
+                    self.curr_line_code.second_oprand = int_num;
+                    self.curr_line_code.ext = BC_imm;
+                },
+                // [], ref
+                Token.InvalidToken => {
+                    const inner = token[1 .. token.len - 1];
+                    curr_token_type = getTokenType(inner);
+
+                    if (curr_token_type == Token.Register) {
+                        // ld
+                        if (prev_token_type == Token.Opcode) {
+                            self.curr_line_code.opcode += 1;
+                            self.curr_line_code.first_oprand = getBc(&str_BC_map, inner);
+                        } else {
+                            self.curr_line_code.second_oprand = getBc(&str_BC_map, inner);
+                            self.curr_line_code.ext = BC_reg_ref;
+                        }
+                    } else
+                    //imm
+                    {
+                        const int_num = toInt(inner);
+                        self.curr_line_code.second_oprand = int_num;
+                        self.curr_line_code.ext = BC_imm_ref;
+                    }
+                },
+            }
+
+            prev_token_type = curr_token_type;
         }
 
-        for (line[begin_idx..buf_end], 0..) |char, i| {
+        self.curr_line_code.len = self.getLen();
+    }
+
+    fn nextToken(self: *ImFineAssembly, line: []u8) !?[]u8 {
+        _ = self;
+        const buf_end = line.len;
+        var token_str: ?[]u8 = null;
+
+        while (begin_idx < buf_end) {
+            defer {
+                curr_idx += 1;
+                begin_idx = curr_idx;
+            }
+            const char = line[begin_idx];
             switch (char) {
-                SEMICOLON, EOL => return null,
-                SPACE, COMMA => continue,
+                SEMICOLON, EOL => break,
+                SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
+                SPACE, COMMA => {
+                    continue;
+                },
                 SQUARE_BRACKET_OPEN => {
-                    begin_idx += @as(u32, @intCast(i));
                     curr_idx = begin_idx;
 
                     while (nextChar(line[curr_idx..buf_end])) |next| {
@@ -282,79 +326,42 @@ const ImFineAssembly = struct {
                         return SyntaxError.CloseSquareBracketNeeded;
                     }
 
-                    token_str = line[begin_idx + 1 .. curr_idx - 1];
-                    token_type = switch (getTokenType(token_str)) {
-                        Token.Register => |res| blk: {
-                            // if opcode ld (ldm)
-                            if (self.token == Token.Opcode) {
-                                self.curr_line_code.opcode += 1;
-                                self.curr_line_code.first_oprand = getBc(&str_BC_map, token_str);
-                            } else {
-                                if (!hasComma(line[0..begin_idx]) and self.token != Token.Opcode)
-                                    return SyntaxError.CommaNeeded;
-                                self.curr_line_code.second_oprand = getBc(&str_BC_map, token_str);
-                                self.curr_line_code.ext = BC_reg_ref;
-                            }
-                            break :blk res;
-                        },
-                        Token.Imm => |res| blk: {
-                            const int_num = toInt(token_str);
-                            if (!hasComma(line[0..begin_idx]) and self.token != Token.Opcode)
-                                return SyntaxError.CommaNeeded;
-                            self.curr_line_code.second_oprand = int_num;
-                            self.curr_line_code.ext = BC_imm_ref;
-                            break :blk res;
-                        },
-                        else => Token.InvalidToken,
-                    };
-
-                    return token_type;
+                    token_str = line[begin_idx..curr_idx];
+                    break;
                 },
                 else => {
-                    begin_idx += @as(u32, @intCast(i));
                     curr_idx = begin_idx;
 
                     while (nextChar(line[curr_idx..buf_end])) |next| {
                         curr_idx += 1;
-                        if (!isLetterOrDigit(next))
-                            break;
+                        if (!isLetterOrDigit(next)) {
+                            switch (next) {
+                                SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
+                                else => break,
+                            }
+                        }
                     } else {
                         curr_idx += 1;
                     }
 
                     token_str = line[begin_idx..curr_idx];
-                    token_type = switch (getTokenType(token_str)) {
-                        Token.Opcode => |res| blk: {
-                            self.curr_line_code.opcode = getBc(&str_BC_map, token_str);
-                            break :blk res;
-                        },
-                        Token.Register => |res| blk: {
-                            if (hasComma(line[begin_idx..buf_end])) {
-                                self.curr_line_code.first_oprand = getBc(&str_BC_map, token_str);
-                            } else {
-                                if (!hasComma(line[0..begin_idx]) and self.token != Token.Opcode)
-                                    return SyntaxError.CommaNeeded;
-                                self.curr_line_code.second_oprand = getBc(&str_BC_map, token_str);
-                                self.curr_line_code.ext = BC_reg;
-                            }
-                            break :blk res;
-                        },
-                        Token.Imm => |res| blk: {
-                            const int_num = toInt(token_str);
-                            self.curr_line_code.second_oprand = int_num;
-                            self.curr_line_code.ext = BC_imm;
-                            break :blk res;
-                        },
-                        else => Token.InvalidToken,
-                    };
-
-                    print("{s}\n", .{token_str});
-                    return token_type;
+                    break;
                 },
             }
         }
 
-        return null;
+        return token_str;
+    }
+
+    fn getLen(self: *ImFineAssembly) u3 {
+        return switch (self.curr_line_code.second_oprand) {
+            0 => 0b000,
+            1...(pow(u16, 2, 8) - 1) => 0b001,
+            pow(u16, 2, 8)...(pow(u32, 2, 16) - 1) => 0b010,
+            pow(u32, 2, 16)...(pow(u64, 2, 32) - 1) => 0b011,
+            pow(u64, 2, 32)...(pow(u128, 2, 64) - 1) => 0b100,
+            pow(u128, 2, 64)...(pow(u129, 2, 128) - 1) => 0b100,
+        };
     }
 
     fn toBinary(self: *ImFineAssembly) !void {
@@ -362,14 +369,6 @@ const ImFineAssembly = struct {
 
         for (self.codes.allocatedSlice()[0..self.codes.items.len]) |*code| {
             var index: u8 = 2;
-            code.len = switch (code.second_oprand) {
-                0 => 0b000,
-                1...(pow(u16, 2, 8) - 1) => 0b001,
-                pow(u16, 2, 8)...(pow(u32, 2, 16) - 1) => 0b010,
-                pow(u32, 2, 16)...(pow(u64, 2, 32) - 1) => 0b011,
-                pow(u64, 2, 32)...(pow(u128, 2, 64) - 1) => 0b100,
-                pow(u128, 2, 64)...(pow(u129, 2, 128) - 1) => 0b100,
-            };
             const bytes: u8 = @divExact(pow(u8, 2, code.len + 2), 8);
 
             buf[0] = code.opcode << 2 | code.ext;
@@ -408,27 +407,25 @@ const ImFineAssembly = struct {
         self.codes = ArrayList(Code).init(allocator);
         defer self.codes.deinit();
 
-        line: while (try self.nextLine()) |line| {
+        while (try self.nextLine()) |line| {
             curr_idx = 0;
             begin_idx = 0;
             self.curr_line_code = emptyCode();
+            self.tokens = ArrayList([]u8).init(allocator);
+            defer self.tokens.deinit();
 
-            while (try self.nextToken(line)) |hoge| {
-                self.token = hoge;
-                switch (self.token) {
-                    Token.Opcode => continue,
-                    Token.Register => continue,
-                    Token.Imm => continue,
-                    Token.InvalidToken => break :line,
-                }
+            while (try self.nextToken(line)) |token| {
+                try self.tokens.append(token);
             }
+
+            try self.parse();
+            try self.codes.append(self.curr_line_code);
 
             if (true) {
                 try stdout.print("{s}\n", .{line});
+                try stdout.print("tokens /{s}/\n", .{self.tokens.items});
                 try stdout.print("{!}\n\n", .{self.curr_line_code});
             }
-
-            try self.codes.append(self.curr_line_code);
         }
 
         self.out_buf = ArrayList(u8).init(allocator);
