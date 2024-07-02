@@ -40,6 +40,11 @@ fn toInt(buf: []const u8) u128 {
     return res.?;
 }
 
+fn nextChar(buf: []u8) ?u8 {
+    const char = if (buf.len > 1) buf[1] else null;
+    return char;
+}
+
 const ImFineAssembly = struct {
     src_name: []u8,
     dst_name: []u8,
@@ -73,7 +78,7 @@ const ImFineAssembly = struct {
 
     // the order is matter
     // ldr, ldm
-    const instructions = [_][]const u8{ "push", "pop", "add", "sub", "mul", "div", "and", "or", "xor", "shl", "ld", "ld", "cmp", "jmp", "jg", "jz", "jl", "nop" };
+    const instructions = [_][]const u8{ "push", "pop", "add", "sub", "mul", "div", "and", "or", "xor", "shl", "ld", "ld", "cmp", "jmp", "jg", "jz", "jl", "call", "ret", "nop" };
     const registers = [_][]const u8{
         "ip",
         "sp",
@@ -236,11 +241,6 @@ const ImFineAssembly = struct {
         } else {
             return Token.InvalidToken;
         }
-    }
-
-    fn nextChar(buf: []u8) ?u8 {
-        const char = if (buf.len > 1) buf[1] else null;
-        return char;
     }
 
     fn parse(self: *ImFineAssembly) !void {
@@ -421,7 +421,7 @@ const ImFineAssembly = struct {
             try self.parse();
             try self.codes.append(self.curr_line_code);
 
-            if (true) {
+            if (false) {
                 try stdout.print("{s}\n", .{line});
                 try stdout.print("tokens /{s}/\n", .{self.tokens.items});
                 try stdout.print("{!}\n\n", .{self.curr_line_code});
