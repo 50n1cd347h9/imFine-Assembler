@@ -223,10 +223,9 @@ const ImFineAssembly = struct {
     }
 
     fn getLabelIdx(self: *ImFineAssembly, label: []const u8) ?u128 {
-        for (0..self.label_addr.items.len) |i| {
-            if (std.mem.eql(u8, self.label_addr.items[i].label, label))
-                return self.label_addr.items[i].label_idx;
-        }
+        for (self.label_addr.items) |label_addr|
+            if (std.mem.eql(u8, label_addr.label, label))
+                return label_addr.label_idx;
         return null;
     }
 
@@ -362,8 +361,8 @@ const ImFineAssembly = struct {
                         self.curr_line_code.second_oprand = idx;
                         continue;
                     }
+                    self.curr_line_code.second_oprand = self.label_idx;
                     try self.submitLabel(label);
-                    // return SyntaxError.UnknownToken;
                 },
                 Token.InvalidToken => {
                     if (prev_token_type == Token.Opcode) {
