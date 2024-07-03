@@ -56,20 +56,29 @@ const ImFineAssembly = struct {
     tokens: ArrayList([]u8),
     curr_line_code: Code,
     codes: ArrayList(Code),
+    label_addr: ArrayList(Label2addr),
+    label_slots: ArrayList(LabelSlot),
     out_buf: ArrayList(u8),
+    label_idx: ByteWidth,
 
+    const ByteWidth: type = u32;
     const COMMA: u8 = ',';
     const SEMICOLON: u8 = ';';
     const SPACE: u8 = ' ';
     const SQUARE_BRACKET_OPEN = '[';
     const SQUARE_BRACKET_CLOSE = ']';
+    const INDENT = '\t';
+    const COLON: u8 = ':';
     const EOL = '\x00';
     const BC_imm: u2 = 0b00;
     const BC_reg: u2 = 0b01;
     const BC_imm_ref: u2 = 0b10;
     const BC_reg_ref: u2 = 0b11;
+    const LABEL: u8 = 0b11000000;
 
     var str_BC_map: [instructions.len + registers.len]StrBc = undefined;
+    var labels_buf: [0x1000]u8 = undefined;
+    var labels_buf_idx: usize = 0;
     var begin_idx: u32 = 0;
     var curr_idx: u32 = 0;
     var allocator: std.mem.Allocator = undefined;
@@ -92,6 +101,8 @@ const ImFineAssembly = struct {
         CommaNeeded,
         OpenSquareBracketNeeded,
         CloseSquareBracketNeeded,
+        LabelNotFound,
+        UnknownToken,
     };
 
     const ArgError = error{
@@ -102,6 +113,8 @@ const ImFineAssembly = struct {
         Register,
         Opcode,
         Imm,
+        Ref,
+        Label,
         InvalidToken,
     };
     const StrBc = struct {
@@ -117,14 +130,25 @@ const ImFineAssembly = struct {
         second_oprand: u128,
     };
 
+    const Label2addr = struct {
+        label: []u8,
+        label_idx: ByteWidth,
+        addr_abs: ByteWidth,
+    };
+
+    const LabelSlot = struct {
+        place: ByteWidth,
+        label_idx: ByteWidth,
+    };
+
     const Int = struct {
         number: u128,
         len: u16,
     };
 
     fn init(self: *ImFineAssembly, _allocator: std.mem.Allocator) !void {
-        _ = self;
         allocator = _allocator;
+        self.label_idx = 0;
         for (instructions, 0..) |instruction, i| {
             str_BC_map[i].name = instruction;
             str_BC_map[i].bc = @as(u8, @intCast(i));
@@ -198,6 +222,14 @@ const ImFineAssembly = struct {
         return 0;
     }
 
+    fn getLabelIdx(self: *ImFineAssembly, label: []const u8) ?u128 {
+        for (0..self.label_addr.items.len) |i| {
+            if (std.mem.eql(u8, self.label_addr.items[i].label, label))
+                return self.label_addr.items[i].label_idx;
+        }
+        return null;
+    }
+
     fn isRegister(buf: []const u8) bool {
         for (registers) |register|
             if (std.mem.eql(u8, buf, register))
@@ -231,6 +263,18 @@ const ImFineAssembly = struct {
         return false;
     }
 
+    fn isRef(buf: []const u8) bool {
+        if (buf[0] == SQUARE_BRACKET_OPEN)
+            return true;
+        return false;
+    }
+
+    fn isLabel(buf: []const u8) bool {
+        if (buf[buf.len - 1] == COLON)
+            return true;
+        return false;
+    }
+
     fn getTokenType(buf: []const u8) Token {
         if (isOpcode(buf)) {
             return Token.Opcode;
@@ -238,9 +282,30 @@ const ImFineAssembly = struct {
             return Token.Imm;
         } else if (isRegister(buf)) {
             return Token.Register;
+        } else if (isRef(buf)) {
+            return Token.Ref;
+        } else if (isLabel(buf)) {
+            return Token.Label;
         } else {
             return Token.InvalidToken;
         }
+    }
+
+    fn submitLabel(self: *ImFineAssembly, label: []u8) !void {
+        const label_len = label.len;
+        defer {
+            labels_buf_idx += label_len;
+            self.label_idx += 1;
+        }
+
+        const label_slice = labels_buf[labels_buf_idx .. labels_buf_idx + label_len];
+        copyForwards(u8, label_slice, label);
+
+        try self.label_addr.append(Label2addr{
+            .label_idx = self.label_idx,
+            .label = label_slice,
+            .addr_abs = 0,
+        });
     }
 
     fn parse(self: *ImFineAssembly) !void {
@@ -267,7 +332,7 @@ const ImFineAssembly = struct {
                     self.curr_line_code.ext = BC_imm;
                 },
                 // [], ref
-                Token.InvalidToken => {
+                Token.Ref => {
                     const inner = token[1 .. token.len - 1];
                     curr_token_type = getTokenType(inner);
 
@@ -288,12 +353,37 @@ const ImFineAssembly = struct {
                         self.curr_line_code.ext = BC_imm_ref;
                     }
                 },
+                // if label, the address should be resoluted in toBinary();
+                Token.Label => {
+                    const label = token[0 .. token.len - 1];
+                    self.curr_line_code.opcode = LABEL;
+                    // if already submitted
+                    if (self.getLabelIdx(label)) |idx| {
+                        self.curr_line_code.second_oprand = idx;
+                        continue;
+                    }
+                    try self.submitLabel(label);
+                    // return SyntaxError.UnknownToken;
+                },
+                Token.InvalidToken => {
+                    if (prev_token_type == Token.Opcode) {
+                        if (self.getLabelIdx(token)) |idx| {
+                            self.curr_line_code.second_oprand = idx;
+                        } else {
+                            self.curr_line_code.opcode |= LABEL;
+                            self.curr_line_code.second_oprand = self.label_idx;
+                            try self.submitLabel(token);
+                        }
+                    } else {
+                        return SyntaxError.UnknownToken;
+                    }
+                },
             }
 
             prev_token_type = curr_token_type;
         }
 
-        self.curr_line_code.len = self.getLen();
+        self.curr_line_code.len = getLen(self.curr_line_code.second_oprand);
     }
 
     fn nextToken(self: *ImFineAssembly, line: []u8) !?[]u8 {
@@ -310,7 +400,7 @@ const ImFineAssembly = struct {
             switch (char) {
                 SEMICOLON, EOL => break,
                 SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
-                SPACE, COMMA => {
+                SPACE, INDENT, COMMA => {
                     continue;
                 },
                 SQUARE_BRACKET_OPEN => {
@@ -337,6 +427,10 @@ const ImFineAssembly = struct {
                         if (!isLetterOrDigit(next)) {
                             switch (next) {
                                 SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
+                                COLON => {
+                                    curr_idx += 1;
+                                    break;
+                                },
                                 else => break,
                             }
                         }
@@ -353,8 +447,8 @@ const ImFineAssembly = struct {
         return token_str;
     }
 
-    fn getLen(self: *ImFineAssembly) u3 {
-        return switch (self.curr_line_code.second_oprand) {
+    fn getLen(num: u128) u3 {
+        return switch (num) {
             0 => 0b000,
             1...(pow(u16, 2, 8) - 1) => 0b001,
             pow(u16, 2, 8)...(pow(u32, 2, 16) - 1) => 0b010,
@@ -364,13 +458,105 @@ const ImFineAssembly = struct {
         };
     }
 
+    fn resoluteLabelAddr(self: *ImFineAssembly, idx: u128, addr: usize) void {
+        self.label_addr.items[@intCast(idx)].addr_abs = @intCast(addr);
+    }
+
+    fn getLabelAddr(self: *ImFineAssembly, idx: u128) ByteWidth {
+        return self.label_addr.items[@intCast(idx)].addr_abs;
+    }
+
+    fn getBytes(origin: u128, dst: u128, long: u8) u8 {
+        const abs = if (dst < origin) (origin - dst) else (dst - origin);
+        const minus = if (origin > dst) true else false;
+
+        if (abs == 0)
+            return 0;
+
+        var i: u8 = long - 1;
+
+        const res = while (i > 0) : (i -= 1) {
+            if (abs >> @as(u7, @intCast(i)) != 0b1) {
+                if (i <= (long / 2))
+                    break getBytes(origin, dst, long / 2);
+            } else {
+                if (minus)
+                    break long * 2 / 8;
+                break long / 8;
+            }
+        } else {
+            return 0;
+        };
+
+        return res;
+    }
+
+    fn getRelative(origin: ByteWidth, dst: ByteWidth) ByteWidth {
+        const abs = if (origin > dst) (origin - dst) else (dst - origin);
+        const minus = if (origin > dst) true else false;
+
+        if (minus)
+            return abs & (0b1 << (@sizeOf(ByteWidth) * 8 - 1));
+        return abs;
+    }
+
+    fn write(self: *ImFineAssembly, slot_place: ByteWidth, value: ByteWidth) void {
+        const mask: ByteWidth = 0xff;
+        const src_bytes = @sizeOf(ByteWidth);
+
+        for (0..src_bytes) |i| {
+            const ref = i + @as(ByteWidth, @intCast(slot_place));
+            const ofs: u5 = @intCast(i);
+            const byte = shr(ByteWidth, value, ofs * 8) & mask;
+            self.out_buf.items[ref] = @as(u8, @intCast(byte));
+        }
+    }
+
+    fn resoluteLabelSlots(self: *ImFineAssembly) !void {
+        for (self.label_slots.items) |slot| {
+            const idx = slot.label_idx;
+
+            search_label: for (self.label_addr.items) |label| {
+                if (label.label_idx == idx) {
+                    const addr_abs = label.addr_abs;
+                    const slot_place = slot.place;
+                    const next_ins_addr = slot_place + @sizeOf(ByteWidth);
+                    const rel_addr = getRelative(next_ins_addr, addr_abs);
+                    self.write(slot_place, rel_addr);
+                    break :search_label;
+                }
+            } else {
+                return SyntaxError.LabelNotFound;
+            }
+        }
+    }
+
     fn toBinary(self: *ImFineAssembly) !void {
         var buf: [0x50]u8 = undefined;
+        var binary_idx: usize = 0;
+        self.label_slots = ArrayList(LabelSlot).init(allocator);
+        defer self.label_slots.deinit();
 
         for (self.codes.allocatedSlice()[0..self.codes.items.len]) |*code| {
-            var index: u8 = 2;
-            const bytes: u8 = @divExact(pow(u8, 2, code.len + 2), 8);
+            var index: u8 = 0;
+            defer binary_idx += index;
 
+            if (code.opcode & LABEL == LABEL) {
+                // if label
+                if (code.opcode == LABEL) {
+                    self.resoluteLabelAddr(code.second_oprand, binary_idx);
+                    continue;
+                } else {
+                    try self.label_slots.append(LabelSlot{
+                        .place = @intCast(binary_idx + 2),
+                        .label_idx = @intCast(code.second_oprand),
+                    });
+                    code.len = getLen(1 << (@sizeOf(ByteWidth) * 8 - 1));
+                }
+            }
+
+            const bytes: u8 = if (code.len == 0) 1 else @divExact(pow(u8, 2, code.len + 2), 8);
+            index = 2;
             buf[0] = code.opcode << 2 | code.ext;
             buf[1] = @as(u8, @intCast(code.len)) << 5 | code.first_oprand << 2 | code.padding;
             for (0..bytes) |i| {
@@ -381,6 +567,8 @@ const ImFineAssembly = struct {
 
             try self.out_buf.appendSlice(buf[0..index]);
         }
+
+        try self.resoluteLabelSlots();
     }
 
     fn nextLine(self: *ImFineAssembly) !?[]u8 {
@@ -406,6 +594,8 @@ const ImFineAssembly = struct {
         self.input_reader = self.src_file.reader();
         self.codes = ArrayList(Code).init(allocator);
         defer self.codes.deinit();
+        self.label_addr = ArrayList(Label2addr).init(allocator);
+        defer self.label_addr.deinit();
 
         while (try self.nextLine()) |line| {
             curr_idx = 0;
@@ -417,14 +607,16 @@ const ImFineAssembly = struct {
             while (try self.nextToken(line)) |token| {
                 try self.tokens.append(token);
             }
+            if (self.tokens.items.len == 0)
+                continue;
 
             try self.parse();
             try self.codes.append(self.curr_line_code);
 
             if (false) {
-                try stdout.print("{s}\n", .{line});
-                try stdout.print("tokens /{s}/\n", .{self.tokens.items});
-                try stdout.print("{!}\n\n", .{self.curr_line_code});
+                print("{s}\n", .{line});
+                print("tokens /{s}/\n", .{self.tokens.items});
+                print("{!}\n\n", .{self.curr_line_code});
             }
         }
 
