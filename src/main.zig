@@ -11,7 +11,6 @@ const shr = std.math.shr;
 const ArrayList = std.ArrayList;
 const mem = std.mem;
 const copyForwards = mem.copyForwards;
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const builtin = std.builtin;
 
 fn toLSB(num: u128, index: usize) u8 {
@@ -28,20 +27,18 @@ fn isLetterOrDigit(char: u8) bool {
     }
 }
 
-fn toInt(buf: []const u8) u128 {
-    var res: ?u128 = 0;
+fn toInt(buf: []const u8) !u128 {
+    var res: u128 = 0;
     if (buf.len > 2 and buf[0] == '0' and buf[1] == 'x') {
-        res = std.fmt.parseInt(u128, buf[2..buf.len], 16) catch null;
+        res = try std.fmt.parseInt(u128, buf[2..buf.len], 16);
     } else {
-        res = std.fmt.parseInt(u128, buf, 10) catch null;
+        res = try std.fmt.parseInt(u128, buf, 10);
     }
-    if (res != null)
-        return res.?;
-    return res.?;
+    return res;
 }
 
 fn nextChar(buf: []u8) ?u8 {
-    const char = if (buf.len > 1) buf[1] else null;
+    const char = if (buf.len > 2) buf[1] else null;
     return char;
 }
 
@@ -311,10 +308,15 @@ const ImFineAssembly = struct {
         var curr_token_type: Token = undefined;
         var prev_token_type: Token = undefined;
         const tokens_sum = self.tokens.items.len;
+        defer {
+            self.curr_line_code.len = getLen(self.curr_line_code.second_oprand);
+        }
 
         for (self.tokens.items) |token| {
             curr_token_type = getTokenType(token);
-
+            defer {
+                prev_token_type = curr_token_type;
+            }
             switch (curr_token_type) {
                 Token.Opcode => self.curr_line_code.opcode = getBc(&str_BC_map, token),
                 Token.Register => {
@@ -326,7 +328,7 @@ const ImFineAssembly = struct {
                     }
                 },
                 Token.Imm => {
-                    const int_num = toInt(token);
+                    const int_num = try toInt(token);
                     self.curr_line_code.second_oprand = int_num;
                     self.curr_line_code.ext = BC_imm;
                 },
@@ -334,7 +336,6 @@ const ImFineAssembly = struct {
                 Token.Ref => {
                     const inner = token[1 .. token.len - 1];
                     curr_token_type = getTokenType(inner);
-
                     if (curr_token_type == Token.Register) {
                         // ld
                         if (prev_token_type == Token.Opcode) {
@@ -347,12 +348,11 @@ const ImFineAssembly = struct {
                     } else
                     //imm
                     {
-                        const int_num = toInt(inner);
+                        const int_num = try toInt(inner);
                         self.curr_line_code.second_oprand = int_num;
                         self.curr_line_code.ext = BC_imm_ref;
                     }
                 },
-                // if label, the address should be resoluted in toBinary();
                 Token.Label => {
                     const label = token[0 .. token.len - 1];
                     self.curr_line_code.opcode = LABEL;
@@ -378,33 +378,23 @@ const ImFineAssembly = struct {
                     }
                 },
             }
-
-            prev_token_type = curr_token_type;
         }
-
-        self.curr_line_code.len = getLen(self.curr_line_code.second_oprand);
     }
 
-    fn nextToken(self: *ImFineAssembly, line: []u8) !?[]u8 {
-        _ = self;
+    fn nextToken(line: []u8) !?[]u8 {
         const buf_end = line.len;
         var token_str: ?[]u8 = null;
 
-        while (begin_idx < buf_end) {
+        while (begin_idx < buf_end) : (curr_idx += 1) {
             defer {
-                curr_idx += 1;
                 begin_idx = curr_idx;
             }
             const char = line[begin_idx];
             switch (char) {
                 SEMICOLON, EOL => break,
                 SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
-                SPACE, INDENT, COMMA => {
-                    continue;
-                },
+                SPACE, INDENT, COMMA => continue,
                 SQUARE_BRACKET_OPEN => {
-                    curr_idx = begin_idx;
-
                     while (nextChar(line[curr_idx..buf_end])) |next| {
                         curr_idx += 1;
                         if (next == SQUARE_BRACKET_CLOSE) {
@@ -414,29 +404,25 @@ const ImFineAssembly = struct {
                     } else {
                         return SyntaxError.CloseSquareBracketNeeded;
                     }
-
                     token_str = line[begin_idx..curr_idx];
                     break;
                 },
                 else => {
-                    curr_idx = begin_idx;
-
                     while (nextChar(line[curr_idx..buf_end])) |next| {
-                        curr_idx += 1;
-                        if (!isLetterOrDigit(next)) {
-                            switch (next) {
-                                SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
-                                COLON => {
-                                    curr_idx += 1;
-                                    break;
-                                },
-                                else => break,
-                            }
+                        defer curr_idx += 1;
+                        if (isLetterOrDigit(next))
+                            continue;
+                        switch (next) {
+                            SQUARE_BRACKET_CLOSE => return SyntaxError.OpenSquareBracketNeeded,
+                            COLON => {
+                                curr_idx += 2;
+                                break;
+                            },
+                            else => break,
                         }
                     } else {
-                        curr_idx += 1;
+                        curr_idx = @intCast(buf_end);
                     }
-
                     token_str = line[begin_idx..curr_idx];
                     break;
                 },
@@ -465,31 +451,6 @@ const ImFineAssembly = struct {
         return self.label_addr.items[@intCast(idx)].addr_abs;
     }
 
-    fn getBytes(origin: u128, dst: u128, long: u8) u8 {
-        const abs = if (dst < origin) (origin - dst) else (dst - origin);
-        const minus = if (origin > dst) true else false;
-
-        if (abs == 0)
-            return 0;
-
-        var i: u8 = long - 1;
-
-        const res = while (i > 0) : (i -= 1) {
-            if (abs >> @as(u7, @intCast(i)) != 0b1) {
-                if (i <= (long / 2))
-                    break getBytes(origin, dst, long / 2);
-            } else {
-                if (minus)
-                    break long * 2 / 8;
-                break long / 8;
-            }
-        } else {
-            return 0;
-        };
-
-        return res;
-    }
-
     fn getRelative(origin: ByteWidth, dst: ByteWidth) ByteWidth {
         const abs = if (origin > dst) (origin - dst) else (dst - origin);
         const minus = if (origin > dst) true else false;
@@ -499,7 +460,7 @@ const ImFineAssembly = struct {
         return abs;
     }
 
-    fn write(self: *ImFineAssembly, slot_place: ByteWidth, value: ByteWidth) void {
+    fn writeAddr(self: *ImFineAssembly, slot_place: ByteWidth, value: ByteWidth) void {
         const mask: ByteWidth = 0xff;
         const src_bytes = @sizeOf(ByteWidth);
 
@@ -521,7 +482,7 @@ const ImFineAssembly = struct {
                     const slot_place = slot.place;
                     const next_ins_addr = slot_place + @sizeOf(ByteWidth);
                     const rel_addr = getRelative(next_ins_addr, addr_abs);
-                    self.write(slot_place, rel_addr);
+                    self.writeAddr(slot_place, rel_addr);
                     break :search_label;
                 }
             } else {
@@ -530,31 +491,34 @@ const ImFineAssembly = struct {
         }
     }
 
+    fn getSecondOprandBytes(len: u3) u8 {
+        return if (len == 0) 1 else @divExact(pow(u8, 2, len + 2), 8);
+    }
+
     fn toBinary(self: *ImFineAssembly) !void {
         var buf: [0x50]u8 = undefined;
         var binary_idx: usize = 0;
         self.label_slots = ArrayList(LabelSlot).init(allocator);
         defer self.label_slots.deinit();
 
-        for (self.codes.allocatedSlice()[0..self.codes.items.len]) |*code| {
+        for (self.codes.items) |*code| {
             var index: u8 = 0;
             defer binary_idx += index;
 
-            if (code.opcode & LABEL == LABEL) {
-                // if label
-                if (code.opcode == LABEL) {
-                    self.resoluteLabelAddr(code.second_oprand, binary_idx);
-                    continue;
-                } else {
-                    try self.label_slots.append(LabelSlot{
-                        .place = @intCast(binary_idx + 2),
-                        .label_idx = @intCast(code.second_oprand),
-                    });
-                    code.len = getLen(1 << (@sizeOf(ByteWidth) * 8 - 1));
-                }
+            if (code.opcode == LABEL) {
+                self.resoluteLabelAddr(code.second_oprand, binary_idx);
+                continue;
             }
 
-            const bytes: u8 = if (code.len == 0) 1 else @divExact(pow(u8, 2, code.len + 2), 8);
+            if (code.opcode & LABEL == LABEL) {
+                try self.label_slots.append(LabelSlot{
+                    .place = @intCast(binary_idx + 2),
+                    .label_idx = @intCast(code.second_oprand),
+                });
+                code.len = getLen(1 << (@sizeOf(ByteWidth) * 8 - 1));
+            }
+
+            const bytes: u8 = getSecondOprandBytes(code.len);
             index = 2;
             buf[0] = code.opcode << 2 | code.ext;
             buf[1] = @as(u8, @intCast(code.len)) << 5 | code.first_oprand << 2 | code.padding;
@@ -580,81 +544,77 @@ const ImFineAssembly = struct {
             return line;
         if (@import("builtin").os.tag == .windows)
             std.mem.trimRight(u8, self.line_buffer, "\r");
-        // skip empty line
         return if (line.?.len == 0) self.nextLine() else line;
     }
 
+    fn errorHandler(self: *ImFineAssembly) void {
+        print("line: {s}", .{self.line_buffer});
+        fs.cwd().deleteFile(
+            self.dst_name,
+        ) catch unreachable;
+    }
+
     fn assemble(self: *ImFineAssembly) !void {
+        errdefer {
+            self.errorHandler();
+        }
+
         self.src_file = try fs.cwd().openFile(
             self.src_name,
             .{ .mode = .read_only },
         );
-        defer self.src_file.close();
-        self.input_reader = self.src_file.reader();
-        self.codes = ArrayList(Code).init(allocator);
-        defer self.codes.deinit();
-        self.label_addr = ArrayList(Label2addr).init(allocator);
-        defer self.label_addr.deinit();
-
-        while (try self.nextLine()) |line| {
-            curr_idx = 0;
-            begin_idx = 0;
-            self.curr_line_code = emptyCode();
-            self.tokens = ArrayList([]u8).init(allocator);
-            defer self.tokens.deinit();
-
-            while (try self.nextToken(line)) |token| {
-                try self.tokens.append(token);
-            }
-            if (self.tokens.items.len == 0)
-                continue;
-
-            try self.parse();
-            try self.codes.append(self.curr_line_code);
-
-            if (false) {
-                print("{s}\n", .{line});
-                print("tokens /{s}/\n", .{self.tokens.items});
-                print("{!}\n\n", .{self.curr_line_code});
-            }
-        }
-
-        self.out_buf = ArrayList(u8).init(allocator);
-        defer self.out_buf.deinit();
-        try self.toBinary();
-
         self.dst_file = try fs.cwd().createFile(
             self.dst_name,
             .{},
         );
-        defer self.dst_file.close();
+        self.input_reader = self.src_file.reader();
+        self.codes = ArrayList(Code).init(allocator);
+        self.label_addr = ArrayList(Label2addr).init(allocator);
+        self.out_buf = ArrayList(u8).init(allocator);
         self.output_writer = self.dst_file.writer();
+        defer {
+            self.label_addr.deinit();
+            self.src_file.close();
+            self.codes.deinit();
+            self.out_buf.deinit();
+            self.dst_file.close();
+        }
+
+        while (try self.nextLine()) |line| {
+            self.curr_line_code = emptyCode();
+            self.tokens = ArrayList([]u8).init(allocator);
+            defer {
+                curr_idx = 0;
+                begin_idx = 0;
+                self.tokens.deinit();
+            }
+            while (try nextToken(line)) |token|
+                try self.tokens.append(token);
+            if (self.tokens.items.len == 0)
+                continue;
+            try self.parse();
+            try self.codes.append(self.curr_line_code);
+        }
+
+        try self.toBinary();
         try self.output_writer.writeAll(self.out_buf.items);
     }
 };
 
 pub fn main() !void {
     const args = try process.argsAlloc(std.heap.page_allocator);
-    defer process.argsFree(std.heap.page_allocator, args);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer {
+        process.argsFree(std.heap.page_allocator, args);
         const deinit_status = gpa.deinit();
         _ = deinit_status;
     }
 
     var hoge: ImFineAssembly = undefined;
-    hoge.init(allocator) catch |err| {
-        print("{!}\n", .{err});
-        return;
-    };
-
-    hoge.parseArgs(&args) catch |err| {
-        print("{!}\n", .{err});
-        return;
-    };
-
+    try hoge.init(allocator);
+    try hoge.parseArgs(&args);
     hoge.assemble() catch |err| {
         print("{!}\n", .{err});
-        return;
     };
 }
