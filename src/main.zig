@@ -1,6 +1,7 @@
 const std = @import("std");
 const io = std.io;
 const fs = std.fs;
+const debugPrint = std.debug.print;
 const stdin = io.getStdIn().reader();
 const stdout = io.getStdOut().writer();
 const process = std.process;
@@ -12,6 +13,11 @@ const ArrayList = std.ArrayList;
 const mem = std.mem;
 const copyForwards = mem.copyForwards;
 const builtin = std.builtin;
+const ByteWidth: type = u32;
+const SignedByteWidth: type = @Type(.{ .Int = .{
+    .bits = @typeInfo(ByteWidth).Int.bits,
+    .signedness = builtin.Signedness.signed,
+} });
 
 fn toLSB(num: u128, index: usize) u8 {
     const mask: u32 = 0xff;
@@ -58,7 +64,6 @@ const ImFineAssembly = struct {
     out_buf: ArrayList(u8),
     label_idx: ByteWidth,
 
-    const ByteWidth: type = u32;
     const COMMA: u8 = ',';
     const SEMICOLON: u8 = ';';
     const SPACE: u8 = ' ';
@@ -128,7 +133,7 @@ const ImFineAssembly = struct {
     };
 
     const Label2addr = struct {
-        label: []u8,
+        label_str: []u8,
         label_idx: ByteWidth,
         addr_abs: ByteWidth,
     };
@@ -221,7 +226,7 @@ const ImFineAssembly = struct {
 
     fn getLabelIdx(self: *ImFineAssembly, label: []const u8) ?u128 {
         for (self.label_addr.items) |label_addr|
-            if (std.mem.eql(u8, label_addr.label, label))
+            if (std.mem.eql(u8, label_addr.label_str, label))
                 return label_addr.label_idx;
         return null;
     }
@@ -299,8 +304,8 @@ const ImFineAssembly = struct {
 
         try self.label_addr.append(Label2addr{
             .label_idx = self.label_idx,
-            .label = label_slice,
-            .addr_abs = 0,
+            .label_str = label_slice,
+            .addr_abs = undefined,
         });
     }
 
@@ -366,13 +371,13 @@ const ImFineAssembly = struct {
                 },
                 Token.InvalidToken => {
                     if (prev_token_type == Token.Opcode) {
+                        self.curr_line_code.opcode |= LABEL;
                         if (self.getLabelIdx(token)) |idx| {
                             self.curr_line_code.second_oprand = idx;
-                        } else {
-                            self.curr_line_code.opcode |= LABEL;
-                            self.curr_line_code.second_oprand = self.label_idx;
-                            try self.submitLabel(token);
+                            continue;
                         }
+                        self.curr_line_code.second_oprand = self.label_idx;
+                        try self.submitLabel(token);
                     } else {
                         return SyntaxError.UnknownToken;
                     }
@@ -451,13 +456,12 @@ const ImFineAssembly = struct {
         return self.label_addr.items[@intCast(idx)].addr_abs;
     }
 
-    fn getRelative(origin: ByteWidth, dst: ByteWidth) ByteWidth {
-        const abs = if (origin > dst) (origin - dst) else (dst - origin);
-        const minus = if (origin > dst) true else false;
+    fn getRelative(orig: ByteWidth, dst: ByteWidth) ByteWidth {
+        const signed_orig: SignedByteWidth = @intCast(orig);
+        const sined_dst: SignedByteWidth = @intCast(dst);
+        const rel_addr: ByteWidth = @bitCast(sined_dst - signed_orig);
 
-        if (minus)
-            return abs & (0b1 << (@sizeOf(ByteWidth) * 8 - 1));
-        return abs;
+        return rel_addr;
     }
 
     fn writeAddr(self: *ImFineAssembly, slot_place: ByteWidth, value: ByteWidth) void {
@@ -474,14 +478,13 @@ const ImFineAssembly = struct {
 
     fn resoluteLabelSlots(self: *ImFineAssembly) !void {
         for (self.label_slots.items) |slot| {
-            const idx = slot.label_idx;
-
+            const label_idx = slot.label_idx;
             search_label: for (self.label_addr.items) |label| {
-                if (label.label_idx == idx) {
-                    const addr_abs = label.addr_abs;
+                if (label.label_idx == label_idx) {
+                    const label_addr = label.addr_abs;
                     const slot_place = slot.place;
                     const next_ins_addr = slot_place + @sizeOf(ByteWidth);
-                    const rel_addr = getRelative(next_ins_addr, addr_abs);
+                    const rel_addr = getRelative(next_ins_addr, label_addr);
                     self.writeAddr(slot_place, rel_addr);
                     break :search_label;
                 }
@@ -501,6 +504,7 @@ const ImFineAssembly = struct {
         self.label_slots = ArrayList(LabelSlot).init(allocator);
         defer self.label_slots.deinit();
 
+        // iterate each line
         for (self.codes.items) |*code| {
             var index: u8 = 0;
             defer binary_idx += index;
@@ -510,6 +514,7 @@ const ImFineAssembly = struct {
                 continue;
             }
 
+            // if opcode is a label slot
             if (code.opcode & LABEL == LABEL) {
                 try self.label_slots.append(LabelSlot{
                     .place = @intCast(binary_idx + 2),
@@ -547,18 +552,7 @@ const ImFineAssembly = struct {
         return if (line.?.len == 0) self.nextLine() else line;
     }
 
-    fn errorHandler(self: *ImFineAssembly) void {
-        print("line: {s}", .{self.line_buffer});
-        fs.cwd().deleteFile(
-            self.dst_name,
-        ) catch unreachable;
-    }
-
     fn assemble(self: *ImFineAssembly) !void {
-        errdefer {
-            self.errorHandler();
-        }
-
         self.src_file = try fs.cwd().openFile(
             self.src_name,
             .{ .mode = .read_only },
@@ -599,6 +593,15 @@ const ImFineAssembly = struct {
         try self.toBinary();
         try self.output_writer.writeAll(self.out_buf.items);
     }
+
+    fn entry(self: *ImFineAssembly) void {
+        self.assemble() catch |err| {
+            print("{!}\n", .{err});
+            fs.cwd().deleteFile(
+                self.dst_name,
+            ) catch return;
+        };
+    }
 };
 
 pub fn main() !void {
@@ -614,7 +617,5 @@ pub fn main() !void {
     var hoge: ImFineAssembly = undefined;
     try hoge.init(allocator);
     try hoge.parseArgs(&args);
-    hoge.assemble() catch |err| {
-        print("{!}\n", .{err});
-    };
+    hoge.entry();
 }
