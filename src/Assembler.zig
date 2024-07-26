@@ -402,7 +402,7 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
     const BC_reg: u2 = 0b01;
     const BC_imm_ref: u2 = 0b10;
     const BC_reg_ref: u2 = 0b11;
-    var curr_line_code: Code = undefined;
+    var curr_line_code: Code = emptyCode();
     var curr_token_type: Token = undefined;
     var prev_token_type: Token = undefined;
 
@@ -561,6 +561,8 @@ fn toBinary(self: *ImFineAssembler, codes: *ArrayList(Code)) !void {
     var binary_idx: usize = 0;
     var label_slots = ArrayList(LabelSlot).init(self.allocator);
     defer label_slots.deinit();
+
+    debugPrint("{any}\n", .{codes.items});
 
     // iterate each line
     for (codes.items) |*code| {
