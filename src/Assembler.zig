@@ -186,11 +186,28 @@ pub fn init(allocator: mem.Allocator) ImFineAssembler {
     };
 }
 
+fn strBCMap() type {
+    return struct {
+        str_BC_map: [instructions.len + registers.len]StrBc,
+
+        fn init() []StrBc {
+            for (instructions, 0..) |instruction, i| {
+                str_BC_map[i].name = instruction;
+                str_BC_map[i].bc = @as(u8, @intCast(i));
+            }
+            for (registers, 0..) |register, i| {
+                str_BC_map[instructions.len + i].name = register;
+                str_BC_map[instructions.len + i].bc = @as(u8, @intCast(i));
+            }
+            return &str_BC_map;
+        }
+    };
+}
+
 // *const [][:0]u8 = pointer to an array of zero terminated const u8 values
 pub fn parseArgs(self: *ImFineAssembler, args_p: *const [][:0]u8) !void {
-    if (args_p.len < 2) {
+    if (args_p.len < 2)
         return ArgError.TooFewArgs;
-    }
 
     for (args_p.*, 0..) |arg, i| {
         if (i == 0) continue;
@@ -211,9 +228,7 @@ fn asignOutputName(self: *ImFineAssembler) void {
         if (file_name_buf[i] == EOL) {
             break @as(u8, @intCast(i));
         }
-    } else blk: {
-        break :blk @as(u8, @intCast(file_name_buf.len));
-    };
+    } else @as(u8, @intCast(file_name_buf.len));
 
     self.src_name = file_name_buf[0..src_len];
 
@@ -222,9 +237,7 @@ fn asignOutputName(self: *ImFineAssembler) void {
             break @as(u8, @intCast(i + extension.len));
         }
         file_name_buf[src_len + i] = self.src_name[i];
-    } else blk: {
-        break :blk @as(u8, @intCast(src_len + extension.len));
-    };
+    } else @as(u8, @intCast(src_len + extension.len));
 
     for (extension, 0..) |char, j| {
         file_name_buf[src_len + dst_len - extension.len + j] = char;
@@ -276,17 +289,16 @@ fn isOpcode(buf: []const u8) bool {
 fn isImm(buf: []const u8) bool {
     var res: ?u128 = 0;
     for ([2]u8{ 10, 16 }) |base| {
-        if (buf.len > 2 and buf[0] == '0' and buf[1] == 'x') {
+        if (buf.len > 2 and
+            buf[0] == '0' and
+            buf[1] == 'x')
+        {
             res = std.fmt.parseInt(u128, buf[2..buf.len], base) catch null;
-        } else {
-            res = std.fmt.parseInt(u128, buf, base) catch null;
-        }
+        } else res = std.fmt.parseInt(u128, buf, base) catch null;
         if (base == 16) {
             if (res == null) {
                 return false;
-            } else {
-                return true;
-            }
+            } else return true;
         }
     }
     return false;
@@ -366,7 +378,6 @@ fn getRelative(orig: ByteWidth, dst: ByteWidth) ByteWidth {
 fn writeAddr(self: *ImFineAssembler, slot_place: ByteWidth, value: ByteWidth) void {
     const mask: ByteWidth = 0xff;
     const src_bytes = @sizeOf(ByteWidth);
-
     for (0..src_bytes) |i| {
         const ref = i + @as(ByteWidth, @intCast(slot_place));
         const ofs: u5 = @intCast(i);
@@ -387,9 +398,7 @@ fn resoluteLabelSlots(self: *ImFineAssembler, label_slots: ArrayList(LabelSlot))
                 self.writeAddr(slot_place, rel_addr);
                 break :search_label;
             }
-        } else {
-            return SyntaxError.LabelNotFound;
-        }
+        } else return SyntaxError.LabelNotFound;
     }
 }
 
@@ -407,20 +416,19 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
     var prev_token_type: Token = undefined;
 
     for (0..tokens_sum) |i| {
+        defer prev_token_type = curr_token_type;
         const token = tokens[i];
         curr_token_type = getTokenType(token);
-        defer {
-            prev_token_type = curr_token_type;
-        }
+
         switch (curr_token_type) {
             Token.Opcode => curr_line_code.opcode = getBc(&str_BC_map, token),
             Token.Register => {
-                if (tokens_sum == 3) {
-                    curr_line_code.first_oprand = getBc(&str_BC_map, token);
-                } else {
+                if (tokens_sum != 3) {
                     curr_line_code.second_oprand = getBc(&str_BC_map, token);
                     curr_line_code.ext = BC_reg;
+                    continue;
                 }
+                curr_line_code.first_oprand = getBc(&str_BC_map, token);
             },
             Token.Imm => {
                 const int_num = toInt(token);
@@ -436,17 +444,16 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
                     if (prev_token_type == Token.Opcode) {
                         curr_line_code.opcode += 1;
                         curr_line_code.first_oprand = getBc(&str_BC_map, inner);
-                    } else {
-                        curr_line_code.second_oprand = getBc(&str_BC_map, inner);
-                        curr_line_code.ext = BC_reg_ref;
+                        continue;
                     }
-                } else
-                //imm
-                {
-                    const int_num = toInt(inner);
-                    curr_line_code.second_oprand = int_num;
-                    curr_line_code.ext = BC_imm_ref;
+                    curr_line_code.second_oprand = getBc(&str_BC_map, inner);
+                    curr_line_code.ext = BC_reg_ref;
+                    continue;
                 }
+                //imm
+                const int_num = toInt(inner);
+                curr_line_code.second_oprand = int_num;
+                curr_line_code.ext = BC_imm_ref;
             },
             Token.Label => {
                 const label = token[0 .. token.len - 1];
@@ -468,9 +475,9 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
                     }
                     curr_line_code.second_oprand = self.label_idx;
                     try self.submitLabel(token);
-                } else {
-                    return SyntaxError.UnknownToken;
+                    continue;
                 }
+                return SyntaxError.UnknownToken;
             },
         }
     }
@@ -510,9 +517,7 @@ fn nextToken(line: []u8, begin: *u32, curr: *u32) !?[]u8 {
     var token_str: ?[]u8 = null;
 
     while (begin_idx < buf_end) : (curr_idx += 1) {
-        defer {
-            begin_idx = curr_idx;
-        }
+        defer begin_idx = curr_idx;
         const char = line[begin_idx];
         switch (char) {
             SEMICOLON, EOL => break,
@@ -525,9 +530,7 @@ fn nextToken(line: []u8, begin: *u32, curr: *u32) !?[]u8 {
                         curr_idx += 1;
                         break;
                     }
-                } else {
-                    return SyntaxError.CloseSquareBracketNeeded;
-                }
+                } else return SyntaxError.CloseSquareBracketNeeded;
                 token_str = line[begin_idx..curr_idx];
                 break;
             },
@@ -544,9 +547,7 @@ fn nextToken(line: []u8, begin: *u32, curr: *u32) !?[]u8 {
                         },
                         else => break,
                     }
-                } else {
-                    curr_idx = @intCast(buf_end);
-                }
+                } else curr_idx = @intCast(buf_end);
                 token_str = line[begin_idx..curr_idx];
                 break;
             },
@@ -561,8 +562,6 @@ fn toBinary(self: *ImFineAssembler, codes: *ArrayList(Code)) !void {
     var binary_idx: usize = 0;
     var label_slots = ArrayList(LabelSlot).init(self.allocator);
     defer label_slots.deinit();
-
-    debugPrint("{any}\n", .{codes.items});
 
     // iterate each line
     for (codes.items) |*code| {
@@ -616,16 +615,14 @@ fn nextLine(src_buf: anytype) ?[]u8 {
 fn tokenize(
     self: *ImFineAssembler,
     tokens: *ArrayList(?[]u8),
-) !ArrayList(?[]u8) {
+) !void {
     while (nextLine(self.src_file_buf)) |line| {
         var begin_idx: u32 = 0;
         var curr_idx: u32 = 0;
-        while (try nextToken(line, &begin_idx, &curr_idx)) |token| {
+        while (try nextToken(line, &begin_idx, &curr_idx)) |token|
             try tokens.append(token);
-        }
         try tokens.append(null);
     }
-    return tokens.*;
 }
 
 fn assemble(self: *ImFineAssembler) !void {
@@ -638,6 +635,8 @@ fn assemble(self: *ImFineAssembler) !void {
     defer dst_file.close();
     const output_writer = dst_file.writer();
 
+    var tokens = ArrayList(?[]u8).init(self.allocator);
+    defer tokens.deinit();
     var codes = ArrayList(Code).init(self.allocator);
     defer codes.deinit();
     self.label_addr = ArrayList(Label2addr).init(self.allocator);
@@ -645,11 +644,7 @@ fn assemble(self: *ImFineAssembler) !void {
     self.out_buf = ArrayList(u8).init(self.allocator);
     defer self.out_buf.deinit();
 
-    var tokens = ArrayList(?[]u8).init(self.allocator);
-    tokens = try self.tokenize(
-        &tokens,
-    );
-    defer tokens.deinit();
+    try self.tokenize(&tokens);
     try self.parse(&tokens, &codes);
     try self.toBinary(&codes);
     try output_writer.writeAll(self.out_buf.items);
