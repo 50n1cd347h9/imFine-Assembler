@@ -75,7 +75,6 @@ const filename_len = 0x50;
 
 var DEBUG = false;
 
-var str_BC_map: [instructions.len + registers.len]StrBc = undefined;
 var labels_buf: [0x1000]u8 = undefined;
 var labels_buf_idx: usize = 0;
 var file_name_buf = [_]u8{0} ** (filename_len * 2);
@@ -163,15 +162,6 @@ const Int = struct {
 };
 
 pub fn init(allocator: mem.Allocator) ImFineAssembler {
-    for (instructions, 0..) |instruction, i| {
-        str_BC_map[i].name = instruction;
-        str_BC_map[i].bc = @as(u8, @intCast(i));
-    }
-    for (registers, 0..) |register, i| {
-        str_BC_map[instructions.len + i].name = register;
-        str_BC_map[instructions.len + i].bc = @as(u8, @intCast(i));
-    }
-
     @memset(&file_name_buf, 0);
 
     return ImFineAssembler{
@@ -188,7 +178,7 @@ pub fn init(allocator: mem.Allocator) ImFineAssembler {
 
 fn strBCMap() type {
     return struct {
-        str_BC_map: [instructions.len + registers.len]StrBc,
+        var str_BC_map: [instructions.len + registers.len]StrBc = undefined;
 
         fn init() []StrBc {
             for (instructions, 0..) |instruction, i| {
@@ -257,8 +247,8 @@ fn emptyCode() Code {
     };
 }
 
-fn getBc(bcmap: [*]StrBc, name: []const u8) u8 {
-    for (0..str_BC_map.len) |i| {
+fn getBc(bcmap: []StrBc, name: []const u8) u8 {
+    for (0..bcmap.len) |i| {
         if (eql(u8, bcmap[i].name, name))
             return bcmap[i].bc;
     }
@@ -406,7 +396,7 @@ fn getSecondOprandBytes(len: u3) u8 {
     return if (len == 0) 1 else @divExact(pow(u8, 2, len + 2), 8);
 }
 
-fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !Code {
+fn processLineTokens(self: *ImFineAssembler, str_BC_map: anytype, tokens: [3][]u8, tokens_sum: u32) !Code {
     const BC_imm: u2 = 0b00;
     const BC_reg: u2 = 0b01;
     const BC_imm_ref: u2 = 0b10;
@@ -421,14 +411,14 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
         curr_token_type = getTokenType(token);
 
         switch (curr_token_type) {
-            Token.Opcode => curr_line_code.opcode = getBc(&str_BC_map, token),
+            Token.Opcode => curr_line_code.opcode = getBc(str_BC_map, token),
             Token.Register => {
                 if (tokens_sum != 3) {
-                    curr_line_code.second_oprand = getBc(&str_BC_map, token);
+                    curr_line_code.second_oprand = getBc(str_BC_map, token);
                     curr_line_code.ext = BC_reg;
                     continue;
                 }
-                curr_line_code.first_oprand = getBc(&str_BC_map, token);
+                curr_line_code.first_oprand = getBc(str_BC_map, token);
             },
             Token.Imm => {
                 const int_num = toInt(token);
@@ -443,10 +433,10 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
                     // ld
                     if (prev_token_type == Token.Opcode) {
                         curr_line_code.opcode += 1;
-                        curr_line_code.first_oprand = getBc(&str_BC_map, inner);
+                        curr_line_code.first_oprand = getBc(str_BC_map, inner);
                         continue;
                     }
-                    curr_line_code.second_oprand = getBc(&str_BC_map, inner);
+                    curr_line_code.second_oprand = getBc(str_BC_map, inner);
                     curr_line_code.ext = BC_reg_ref;
                     continue;
                 }
@@ -486,6 +476,7 @@ fn processLineTokens(self: *ImFineAssembler, tokens: [3][]u8, tokens_sum: u32) !
 }
 
 fn parse(self: *ImFineAssembler, tokens: *ArrayList(?[]u8), codes: *ArrayList(Code)) !void {
+    const str_BC_map = strBCMap().init();
     var curr_line_tokens: [3][]u8 = undefined;
     var idx: usize = 0;
 
@@ -495,6 +486,7 @@ fn parse(self: *ImFineAssembler, tokens: *ArrayList(?[]u8), codes: *ArrayList(Co
             const tokens_sum: u32 = @intCast(idx);
             const code: Code = try processLineTokens(
                 self,
+                str_BC_map,
                 curr_line_tokens,
                 tokens_sum,
             );
