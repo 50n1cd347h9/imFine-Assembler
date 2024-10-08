@@ -1,6 +1,7 @@
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const ImFineAssembler = @import("Assembler.zig");
+const debugPrint = std.debug.print;
 
 const mem = std.mem;
 const eql = mem.eql;
@@ -199,10 +200,10 @@ fn getLabelIdx(self: *Parser, label: []const u8) ?u128 {
     return null;
 }
 
+var labels_buf_idx: usize = 0;
+var labels_buf: [0x1000]u8 = undefined;
 fn submitLabel(self: *Parser, label: []u8) !void {
     const label_len = label.len;
-    var labels_buf_idx: usize = 0;
-    var labels_buf: [0x1000]u8 = undefined;
 
     defer {
         labels_buf_idx += label_len;
@@ -298,6 +299,15 @@ fn processLineTokens(self: *Parser, str_BC_map: anytype, tokens: [3][]u8, tokens
     return curr_line_code;
 }
 
+fn printLabelAddr(label_addr: *ArrayList(ImFineAssembler.Label2addr)) void {
+    for (label_addr.items) |item| {
+        debugPrint("label_str: {s}, idx: {d}, addr: undef\n", .{
+            item.label_str,
+            item.label_idx,
+        });
+    }
+}
+
 pub fn parse(self: *Parser) !void {
     const str_BC_map = strBCMap().init();
     var curr_line_tokens: [3][]u8 = undefined;
@@ -319,4 +329,6 @@ pub fn parse(self: *Parser) !void {
         curr_line_tokens[idx] = token.?;
         idx += 1;
     }
+
+    // printLabelAddr(self.label_addr);
 }

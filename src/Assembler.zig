@@ -41,11 +41,11 @@ const EOL = '\x00';
 const LABEL: u8 = 0b11 << 6;
 const TOKEN_DELIMITER = '\x00';
 const LINE_DELIMITER = '\n';
-const filename_len = 0x50;
 
 var DEBUG = false;
 
-var file_name_buf = [_]u8{0} ** (filename_len * 2);
+const filename_len = 0x200;
+var file_name_buf = [_]u8{0} ** (filename_len);
 
 pub const SyntaxError = error{
     CommaNeeded,
@@ -109,33 +109,39 @@ pub fn parseArgs(self: *ImFineAssembler, args_p: *const [][:0]u8) !void {
         }
         // arg is file name
         copyForwards(u8, &file_name_buf, arg);
+        self.src_name = arg;
     }
-    self.asignOutputName();
+    self.assignOutputName();
 }
 
-fn asignOutputName(self: *ImFineAssembler) void {
-    const extension = [4:0]u8{ '.', 'b', 'i', 'n' };
+fn nameEndWithAsm(file_name: []u8) bool {
+    const length = file_name.len;
+    return eql(
+        u8,
+        file_name[length - 4 .. length],
+        ".asm",
+    );
+}
 
-    const src_len = for (0..file_name_buf.len) |i| {
-        if (file_name_buf[i] == EOL) {
-            break @as(u8, @intCast(i));
-        }
-    } else @as(u8, @intCast(file_name_buf.len));
+fn assignOutputName(self: *ImFineAssembler) void {
+    const extension = ".bin";
+    const src_name_len = self.src_name.len;
 
-    self.src_name = file_name_buf[0..src_len];
-
-    const dst_len = for (0..src_len) |i| {
-        if (file_name_buf[i] == '.') {
-            break @as(u8, @intCast(i + extension.len));
-        }
-        file_name_buf[src_len + i] = self.src_name[i];
-    } else @as(u8, @intCast(src_len + extension.len));
-
-    for (extension, 0..) |char, j| {
-        file_name_buf[src_len + dst_len - extension.len + j] = char;
+    if (nameEndWithAsm(self.src_name)) {
+        copyForwards(
+            u8,
+            file_name_buf[src_name_len - 4 .. src_name_len],
+            extension,
+        );
+        self.dst_name = file_name_buf[0..src_name_len];
+    } else {
+        copyForwards(
+            u8,
+            file_name_buf[src_name_len - 1 .. src_name_len + 3],
+            extension,
+        );
+        self.dst_name = file_name_buf[0 .. src_name_len + extension.len];
     }
-
-    self.dst_name = file_name_buf[src_len .. src_len + dst_len];
 }
 
 pub fn getLen(num: u128) u3 {

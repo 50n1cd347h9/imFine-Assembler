@@ -43,11 +43,28 @@ fn toLSB(num: u128, index: usize) u8 {
     return @as(u8, @intCast(byte));
 }
 
-fn resoluteLabelAddr(
+fn writeAddr(
+    self: *Encoder,
+    slot_place: ByteWidth,
+    value: ByteWidth,
+) void {
+    const mask: ByteWidth = 0xff;
+    const src_bytes = @sizeOf(ByteWidth);
+
+    for (0..src_bytes) |i| {
+        const ref = i + @as(ByteWidth, @intCast(slot_place));
+        const ofs: u5 = @intCast(i);
+        const byte = shr(ByteWidth, value, ofs * 8) & mask;
+        self.out_buf.items[ref] = @as(u8, @intCast(byte));
+    }
+}
+
+fn resolveLabelAddr(
     self: *Encoder,
     idx: u128,
     addr: usize,
 ) void {
+    // addr means jump destination
     self.label_addr.items[@intCast(idx)].addr_abs = @intCast(addr);
 }
 
@@ -58,34 +75,26 @@ fn getRelative(orig: ByteWidth, dst: ByteWidth) ByteWidth {
     return rel_addr;
 }
 
-fn writeAddr(
-    self: *Encoder,
-    slot_place: ByteWidth,
-    value: ByteWidth,
-) void {
-    const mask: ByteWidth = 0xff;
-    const src_bytes = @sizeOf(ByteWidth);
-    for (0..src_bytes) |i| {
-        const ref = i + @as(ByteWidth, @intCast(slot_place));
-        const ofs: u5 = @intCast(i);
-        const byte = shr(ByteWidth, value, ofs * 8) & mask;
-        self.out_buf.items[ref] = @as(u8, @intCast(byte));
-    }
-}
-
-fn resoluteLabelSlots(
+fn resolveLabelSlots(
     self: *Encoder,
     label_slots: ArrayList(LabelSlot),
 ) !void {
     for (label_slots.items) |slot| {
         const label_idx = slot.label_idx;
+
         search_label: for (self.label_addr.items) |label| {
             if (label.label_idx == label_idx) {
-                const label_addr = label.addr_abs;
                 const slot_place = slot.place;
+
                 const next_ins_addr = slot_place + @sizeOf(ByteWidth);
-                const rel_addr = getRelative(next_ins_addr, label_addr);
+                const dst_addr = label.addr_abs;
+
+                // next_ins_addr: origin; where the ip points
+                // label_addr: destination
+                const rel_addr = getRelative(next_ins_addr, dst_addr);
+
                 self.writeAddr(slot_place, rel_addr);
+
                 break :search_label;
             }
         } else return SyntaxError.LabelNotFound;
@@ -129,20 +138,20 @@ pub fn encode(
     var label_slots = ArrayList(LabelSlot).init(self.allocator);
     defer label_slots.deinit();
 
-    // self.label_addr = ArrayList(ImFineAssembler.Label2addr).init(self.allocator);
-    // defer self.label_addr.deinit();
-
     // iterate each line
     for (self.codes.items) |*code| {
         var index: u8 = 0;
         defer binary_idx += index;
 
+        // when label itself
         if (code.opcode == LABEL) {
-            self.resoluteLabelAddr(code.second_oprand, binary_idx);
+            // code.second_oprand == label_idx
+            // binary_idx == where the label is
+            self.resolveLabelAddr(code.second_oprand, binary_idx);
             continue;
         }
 
-        // if opcode is a label slot
+        // if opcode is a label slot; jmp <slot>
         if (code.opcode & LABEL == LABEL) {
             try label_slots.append(LabelSlot{
                 .place = @intCast(binary_idx + 2),
@@ -155,5 +164,5 @@ pub fn encode(
 
         try self.out_buf.appendSlice(buf[0..index]);
     }
-    try self.resoluteLabelSlots(label_slots);
+    try self.resolveLabelSlots(label_slots);
 }
