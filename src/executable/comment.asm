@@ -1,12 +1,12 @@
 ld gr0, 4
 jmp aiueo
-
+# hogehjoge
 hogehoge:
-	shl gr0, 4
+	shl gr0, 4 #hogehoge
 	jmp huga
 
 
-
+# hgoeghoe
 
 
 aiueo:

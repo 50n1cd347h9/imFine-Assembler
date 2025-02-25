@@ -151,7 +151,8 @@ pub fn encode(
             continue;
         }
 
-        // if opcode is a label slot; jmp <slot>
+        // when a label slot
+        // jmp <slot>
         if (code.opcode & LABEL == LABEL) {
             try label_slots.append(LabelSlot{
                 .place = @intCast(binary_idx + 2),

@@ -41,6 +41,7 @@ const EOL = '\x00';
 const LABEL: u8 = 0b11 << 6;
 const TOKEN_DELIMITER = '\x00';
 const LINE_DELIMITER = '\n';
+const COMMENT_START = '#';
 
 var DEBUG = false;
 
@@ -155,35 +156,269 @@ pub fn getLen(num: u128) u3 {
     };
 }
 
+/// remove indent
+/// or brank line
+fn preProcess(buf: []u8) !usize {
+    const allocator = std.heap.page_allocator;
+    const tmp = try allocator.alloc(u8, buf.len);
+    defer allocator.free(tmp);
+
+    var i: usize = 0;
+    var newline: bool = false;
+    var comment: bool = false;
+    clean: for (buf) |char| {
+        if (comment) {
+            if (char == LINE_DELIMITER) {
+                comment = false;
+            } else {
+                continue :clean;
+            }
+        }
+
+        if (newline) {
+            if (char == LINE_DELIMITER) {
+                continue :clean;
+            }
+        }
+
+        switch (char) {
+            INDENT => continue :clean,
+            LINE_DELIMITER => newline = true,
+            COMMENT_START => {
+                comment = true;
+                continue :clean;
+            },
+            else => newline = false,
+        }
+
+        tmp[i] = char;
+        i += 1;
+    }
+    i -= 1;
+
+    @memset(tmp[i..tmp.len], '\x00');
+    @memset(buf, '\x00');
+    mem.copyForwards(u8, buf, tmp);
+
+    return i;
+}
+
+/// check if syntax is ok
+fn validate(buf: []u8) !void {
+    const allocator = std.heap.page_allocator;
+    const tmp = try allocator.alloc(u8, buf.len);
+    defer allocator.free(tmp);
+
+    var buf_idx: usize = 0;
+    while (nextLine(buf, &buf_idx)) |line| {
+        try validateToken(line);
+    }
+}
+
+const ValidateState = struct {};
+
+fn isRegister(buf: []const u8) bool {
+    for (registers) |register|
+        if (eql(u8, buf, register))
+            return true;
+    return false;
+}
+
+fn isOpcode(buf: []const u8) bool {
+    for (instructions) |instruction|
+        if (eql(u8, buf, instruction))
+            return true;
+    return false;
+}
+
+fn isImm(buf: []const u8) bool {
+    var res: ?u128 = 0;
+    for ([2]u8{ 10, 16 }) |base| {
+        if (buf.len > 2 and
+            buf[0] == '0' and
+            buf[1] == 'x')
+        {
+            res = std.fmt.parseInt(u128, buf[2..buf.len], base) catch null;
+        } else res = std.fmt.parseInt(u128, buf, base) catch null;
+        if (base == 16) {
+            if (res == null) {
+                return false;
+            } else return true;
+        }
+    }
+    return false;
+}
+
+fn isRef(buf: []const u8) bool {
+    if (buf[0] == SQUARE_BRACKET_OPEN)
+        return true;
+    return false;
+}
+
+fn isLabel(buf: []const u8) bool {
+    if (buf[buf.len - 1] == COLON)
+        return true;
+    return false;
+}
+fn validateToken(line: []u8) !void {
+    var label: bool = false;
+    var second_oprand_expected: bool = false;
+
+    var line_idx: usize = 0;
+    while (readToken(line, &line_idx)) |token| {
+        var new_token: []u8 = token;
+
+        if (label) {
+            if (readToken(line, &line_idx)) |invalid_token| {
+                debugPrint("invalid token -> %s\n", .{invalid_token});
+                return;
+            }
+        }
+
+        if (second_oprand_expected) {
+            if (!readToken(line, &line_idx)) {
+                debugPrint("token expected -> %s _\n", .{token});
+                return;
+            }
+            second_oprand_expected = false;
+        }
+
+        // if token is label
+        if (endWithColon(token)) {
+            label = true;
+            continue;
+        }
+
+        if (endWithComma(token)) {
+            second_oprand_expected = true;
+            new_token = removeComma(token);
+        }
+
+        // for ()
+    }
+}
+
+inline fn removeComma(token: []u8) []u8 {
+    return token[0 .. token.len - 2];
+}
+
+inline fn endWithColon(token: []u8) bool {
+    return token[token.len - 1] == COLON;
+}
+
+inline fn endWithComma(token: []u8) bool {
+    return token[token.len - 1] == COMMA;
+}
+
+fn readToken(line: []u8, idx: *usize) ?[]u8 {
+    const start = idx.*;
+    const end = for (line) |char| {
+        switch (char) {
+            SPACE => {
+                defer idx.* += 1;
+                break idx.*;
+            },
+            COMMA => {
+                idx.* += 1;
+                break idx.*;
+            },
+            COLON => {
+                idx.* += 1;
+                break idx.*;
+            },
+            else => {},
+        }
+        idx.* += 1;
+    };
+    const token = line[start..end];
+
+    return if (token.len == 0) null else token;
+}
+
+fn nextLine(buf: anytype, idx: *usize) ?[]u8 {
+    const start = idx.*;
+    const end = for (buf[start..buf.len]) |char| {
+        if (char == LINE_DELIMITER)
+            break idx.*;
+        idx.* += 1;
+    } else buf.len;
+    const line = buf[start..end];
+
+    return if (line.len == 0) null else line;
+}
+
+const instructions = [_][]const u8{
+    "push",
+    "pop",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "and",
+    "or",
+    "xor",
+    "shl",
+    "ld",
+    "ld",
+    "cmp",
+    "jmp",
+    "jg",
+    "jz",
+    "jl",
+    "call",
+    "ret",
+    "nop",
+};
+
+const registers = [_][]const u8{
+    "ip",
+    "sp",
+    "fp",
+    "flag",
+    "gr0",
+    "gr1",
+};
+
 fn assemble(self: *ImFineAssembler) !void {
     const src_file = try fs.cwd().openFile(self.src_name, .{ .mode = .read_only });
+
     self.src_file_buf = try zig.readSourceFileToEndAlloc(self.allocator, src_file, null);
     defer self.allocator.free(self.src_file_buf);
+
     src_file.close();
 
-    const dst_file = try fs.cwd().createFile(self.dst_name, .{});
-    defer dst_file.close();
-    const output_writer = dst_file.writer();
+    const length = try preProcess(self.src_file_buf);
+    _ = length;
 
-    self.tokens = ArrayList(?[]u8).init(self.allocator);
-    defer self.tokens.deinit();
-    self.codes = ArrayList(Code).init(self.allocator);
-    defer self.codes.deinit();
-    self.label_addr = ArrayList(Label2addr).init(self.allocator);
-    defer self.label_addr.deinit();
-    self.out_buf = ArrayList(u8).init(self.allocator);
-    defer self.out_buf.deinit();
+    debugPrint("{s}", .{self.src_file_buf});
 
-    var tokenizer = Tokenizer.init(self);
-    try tokenizer.tokenize();
+    // const dst_file = try fs.cwd().createFile(self.dst_name, .{});
+    // defer dst_file.close();
 
-    var parser = Parser.init(self);
-    try parser.parse();
+    // const output_writer = dst_file.writer();
 
-    var encoder = Encoder.init(self);
-    try encoder.encode();
+    // self.tokens = ArrayList(?[]u8).init(self.allocator);
+    // defer self.tokens.deinit();
 
-    try output_writer.writeAll(self.out_buf.items);
+    // self.codes = ArrayList(Code).init(self.allocator);
+    // defer self.codes.deinit();
+
+    // self.label_addr = ArrayList(Label2addr).init(self.allocator);
+    // defer self.label_addr.deinit();
+
+    // self.out_buf = ArrayList(u8).init(self.allocator);
+    // defer self.out_buf.deinit();
+
+    // var tokenizer = Tokenizer.init(self);
+    // try tokenizer.tokenize();
+
+    // var parser = Parser.init(self);
+    // try parser.parse();
+
+    // var encoder = Encoder.init(self);
+    // try encoder.encode();
+
+    // try output_writer.writeAll(self.out_buf.items);
 }
 
 pub fn entry(self: *ImFineAssembler) void {

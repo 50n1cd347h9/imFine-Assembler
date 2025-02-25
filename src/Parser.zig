@@ -221,6 +221,7 @@ fn submitLabel(self: *Parser, label: []u8) !void {
 }
 
 fn processLineTokens(self: *Parser, str_BC_map: anytype, tokens: [3][]u8, tokens_sum: u32) !Code {
+    // BC: byte code
     const BC_imm: u2 = 0b00;
     const BC_reg: u2 = 0b01;
     const BC_imm_ref: u2 = 0b10;
