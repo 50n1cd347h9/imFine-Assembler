@@ -379,6 +379,22 @@ const registers = [_][]const u8{
     "gr1",
 };
 
+fn isDigit(ch: u8) bool {
+    const code = @as(i8, @intCast(ch));
+    return code - '0' < 10 and code - '0' >= 0;
+}
+
+fn isHex(ch: u8) bool {
+    const code = @as(i8, @intCast(ch));
+    return (code - 'a' < 6 and code - 'a' >= 0) or isDigit(ch);
+}
+
+var index: usize = 0;
+fn nextChar(buf: []const u8) u8 {
+    defer index += 1;
+    return buf[index];
+}
+
 fn assemble(self: *ImFineAssembler) !void {
     const src_file = try fs.cwd().openFile(self.src_name, .{ .mode = .read_only });
 
@@ -428,4 +444,26 @@ pub fn entry(self: *ImFineAssembler) void {
             self.dst_name,
         ) catch return;
     };
+}
+
+test "digit" {
+    const digits = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
+
+    for (digits) |digit|
+        try std.testing.expect(isDigit(digit));
+
+    try std.testing.expect(!isDigit(':'));
+    try std.testing.expect(!isDigit('/'));
+}
+
+test "hex" {
+    const hexes = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+
+    for (hexes) |hex|
+        try std.testing.expect(isHex(hex));
+
+    try std.testing.expect(!isHex(':'));
+    try std.testing.expect(!isHex('/'));
+    try std.testing.expect(!isHex('`'));
+    try std.testing.expect(!isHex('g'));
 }
