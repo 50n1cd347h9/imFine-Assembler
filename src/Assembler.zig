@@ -3,13 +3,13 @@ const Encoder = @import("Encoder.zig");
 const Tokenizer = @import("Tokenizer.zig");
 const Parser = @import("Parser.zig");
 
+const mem = std.mem;
+const eql = mem.eql;
 const io = std.io;
 const fs = std.fs;
 const debugPrint = std.debug.print;
 const pow = std.math.pow;
 const ArrayList = std.ArrayList;
-const mem = std.mem;
-const eql = mem.eql;
 const copyForwards = mem.copyForwards;
 const builtin = std.builtin;
 const zig = std.zig;
@@ -76,7 +76,6 @@ const instructions = [_][]const u8{
     "xor",
     "shl",
     "ld",
-    "ld",
     "cmp",
     "jmp",
     "jg",
@@ -95,6 +94,10 @@ const registers = [_][]const u8{
     "gr0",
     "gr1",
 };
+
+const keywds = instructions ++ registers;
+
+const KeywdId = struct {};
 
 fn isDigit(ch: u8) bool {
     const code = @as(i8, @intCast(ch));
@@ -116,40 +119,53 @@ fn nextChar(reader: anytype) u8 {
 }
 
 const TokenKind = enum {
-    opcode,
-    //immediate,
-    register,
-    //reference,
     label,
-    labelDecl,
+    labelDef,
     decLiteral,
     hexLiteral,
+    ip,
+    sp,
+    fp,
+    flag,
+    gr0,
+    gr1,
+    push,
+    pop,
+    add,
+    sub,
+    mul,
+    div,
+    and_,
+    or_,
+    xor,
+    shl,
+    ld,
+    cmp,
+    jmp,
+    jg,
+    jz,
+    jl,
+    call,
+    ret,
+    nop,
 };
-
-//fn tokenValType(comptime T: type) type {
-//    return switch (@typeInfo(T)) {
-//        .Int => u32,
-//        else => struct {
-//            ident: []u8,
-//            _buf: [MAX_IDENT_LEN]u8,
-//        },
-//    };
-//}
 
 const Token = struct {
     kind: TokenKind,
-    val: union {
+    val: union(enum) {
         num: u32,
         _buf: [MAX_IDENT_LEN]u8,
     },
-    ident: []u8,
+    i: u8,
 
-    //pub fn init() Token {
-    //    return .{
-    //        .kind = undefined,
-    //        .val = undefined,
-    //    };
-    //}
+    const Self = @This();
+
+    pub fn ident(self: Self) []const u8 {
+        return switch (self.val) {
+            ._buf => self.val._buf[0..@intCast(self.i)],
+            else => @panic("baka"),
+        };
+    }
 };
 
 const CharKind = enum {
@@ -173,6 +189,10 @@ fn charClass(ch: u8) CharKind {
         ':' => {},
         else => {},
     }
+}
+
+fn streql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
 }
 
 const MAX_IDENT_LEN = 0x20;
@@ -223,19 +243,30 @@ fn nextToken(reader: anytype) Token {
                 i += 1;
                 ch = nextChar(reader);
             }
+
+            for (0..keywds.len) |k| {
+                if (streql(keywds[k], buf[0..i])) {
+                    kind = std.meta.stringToEnum(TokenKind, buf[0..i]) orelse @panic("hoge");
+                    break;
+                }
+            } else if (ch == ':') {
+                kind = .labelDef;
+            } else {
+                kind = .label;
+            }
         },
         else => {
             @panic("baka");
         },
     }
 
-    return Token{
+    return .{
         .kind = kind,
-        .ident = buf[0..i],
         .val = switch (kind) {
             .decLiteral, .hexLiteral => .{ .num = num },
             else => .{ ._buf = buf },
         },
+        .i = @intCast(i),
     };
 }
 
@@ -300,55 +331,49 @@ test "letter" {
 
 test "number literal" {
     const fbs = std.io.fixedBufferStream;
+    const Tuple = std.meta.Tuple;
 
-    {
-        const literal = "0x10 ";
-        var stream = fbs(literal);
+    const pass_cases = [_]Tuple(&.{ []const u8, TokenKind, u32 }){
+        .{ "0x10 ", .hexLiteral, 0x10 },
+        .{ "0x10", .hexLiteral, 0x10 },
+        .{ "0", .decLiteral, 0 },
+        .{ "10", .decLiteral, 10 },
+        .{ "20000", .decLiteral, 20000 },
+    };
+    for (pass_cases) |case| {
+        var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
-        try std.testing.expect(token.kind == .hexLiteral and token.val.num == 0x10);
-    }
-    {
-        const literal = "0x10";
-        var stream = fbs(literal);
-        const reader = stream.reader();
-        const token = nextToken(reader);
-        try std.testing.expect(token.kind == .hexLiteral and token.val.num == 0x10);
-    }
-    {
-        const literal = "0";
-        var stream = fbs(literal);
-        const reader = stream.reader();
-        const token = nextToken(reader);
-        try std.testing.expect(token.kind == .decLiteral and token.val.num == 0);
-    }
-    {
-        const literal = "10";
-        var stream = fbs(literal);
-        const reader = stream.reader();
-        const token = nextToken(reader);
-        try std.testing.expect(token.kind == .decLiteral and token.val.num == 10);
-    }
-    {
-        const literal = "20000";
-        var stream = fbs(literal);
-        const reader = stream.reader();
-        const token = nextToken(reader);
-        try std.testing.expect(token.kind == .decLiteral and token.val.num == 20000);
+        try std.testing.expect(token.kind == case[1] and token.val.num == case[2]);
     }
 }
 
 test "identifier" {
     const fbs = std.io.fixedBufferStream;
-    {
-        const ident = "hoge";
-        //const hoge_slice: []const u8 = ident;
-        //try std.testing.expectEqualStrings(ident, hoge_slice);
+    const Tuple = std.meta.Tuple;
 
-        var stream = fbs(ident);
+    const pass_cases = [_]Tuple(&.{ []const u8, TokenKind }){
+        .{ "hoge", .label },
+        //.{ "hoge:", .labelDef },
+    };
+    for (pass_cases) |case| {
+        var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
-        try std.testing.expect(token.kind == .label);
-        try std.testing.expectEqualStrings(ident, token.ident);
+        //std.debug.print("{d}\n", .{token.i});
+        //std.debug.print("{s}\n", .{token.val._buf});
+        //std.debug.print("{s}\n", .{token.ident()});
+        try std.testing.expect(token.kind == case[1]);
+        try std.testing.expectEqualStrings(case[0], token.ident());
+    }
+    const label_cases = [_]Tuple(&.{ []const u8, TokenKind }){
+        .{ "hoge:", .labelDef },
+    };
+    for (label_cases) |case| {
+        var stream = fbs(case[0]);
+        const reader = stream.reader();
+        const token = nextToken(reader);
+        try std.testing.expect(token.kind == case[1]);
+        try std.testing.expectEqualStrings(case[0][0 .. case[0].len - 1], token.ident());
     }
 }

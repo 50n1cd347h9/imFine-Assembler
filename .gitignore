@@ -4,3 +4,4 @@
 /src/imFineVM
 /.nvimlog
 /.bin
+/test*
