@@ -3,6 +3,7 @@ const MAX_TOKEN_BUF = 0x1000;
 var token_buffer: [MAX_TOKEN_BUF]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&token_buffer);
 var tok_a = fba.allocator();
+const EOF = ~@as(u8, @intCast(0));
 
 const instructions = [_][]const u8{
     "push",
@@ -40,6 +41,7 @@ const TokenKind = enum {
     labelDef,
     decLiteral,
     hexLiteral,
+    comma,
     ip,
     sp,
     fp,
@@ -65,6 +67,8 @@ const TokenKind = enum {
     call,
     ret,
     nop,
+    newline,
+    eof,
 
     const Self = @This();
 
@@ -82,13 +86,21 @@ const TokenKind = enum {
 const CharKind = enum {
     digit,
     letter,
+    comma,
+    eof,
+    newline,
+    colon,
     other,
 
     pub fn get(ch: u8) CharKind {
         return switch (ch) {
-            'a'...'z' => CharKind.letter,
-            '0'...'9' => CharKind.digit,
-            else => CharKind.other,
+            'a'...'z' => .letter,
+            '0'...'9' => .digit,
+            '\n' => .newline,
+            ',' => .comma,
+            ':' => .colon,
+            EOF => .eof,
+            else => .other,
         };
     }
 };
@@ -121,33 +133,33 @@ fn streql(a: []const u8, b: []const u8) bool {
 }
 
 fn isDigit(ch: u8) bool {
-    const code = @as(i8, @intCast(ch));
+    const code = @as(i8, @bitCast(ch));
     return 0 <= code - '0' and code - '0' < 10;
 }
 
 fn isHex(ch: u8) bool {
-    const code = @as(i8, @intCast(ch));
+    const code = @as(i8, @bitCast(ch));
     return (0 <= code - 'a' and code - 'a' < 6) or isDigit(ch);
 }
 
 fn isLetter(ch: u8) bool {
-    const code = @as(i8, @intCast(ch));
+    const code = @as(i8, @bitCast(ch));
     return (0 <= code - 'a' and code - 'a' < 26) or (0 <= code - 'A' and code - 'A' < 26);
 }
 
 fn nextChar(reader: anytype) u8 {
-    return reader.readByte() catch 0;
+    return reader.readByte() catch EOF;
 }
 
-// TODO: limit skipping whitespaces by setting max spaces
+var _ch: u8 = ' ';
 fn nextToken(reader: anytype) Token {
-    var ch = nextChar(reader);
     var kind: TokenKind = undefined;
     var num: u32 = 0;
     var buf: [MAX_IDENT_LEN]u8 = [_]u8{0} ** MAX_IDENT_LEN;
     var i: usize = 0;
+    var ch = _ch;
+    defer _ch = ch;
 
-    // skip whitespace or indent
     while (ch == ' ' or ch == '\t')
         ch = nextChar(reader);
 
@@ -159,9 +171,9 @@ fn nextToken(reader: anytype) Token {
                 ch = nextChar(reader);
 
                 if (ch == 'x') {
+                    kind = .hexLiteral;
                     i += 1;
                     ch = nextChar(reader);
-                    kind = .hexLiteral;
                     while (isHex(ch)) {
                         num = num * 16 + (ch - '0');
                         i += 1;
@@ -189,19 +201,30 @@ fn nextToken(reader: anytype) Token {
 
             for (0..keywds.len) |k| {
                 if (streql(keywds[k], buf[0..i])) {
-                    //kind = std.meta.stringToEnum(TokenKind, buf[0..i]) orelse @panic("hoge");
                     kind = TokenKind.get(buf[0..i]);
                     break;
                 }
             } else if (ch == ':') {
                 kind = .labelDef;
+                ch = nextChar(reader);
             } else {
                 kind = .label;
             }
         },
+        .newline => {
+            kind = .newline;
+            ch = nextChar(reader);
+        },
+        .comma => {
+            kind = .comma;
+            ch = nextChar(reader);
+        },
+        .eof => {
+            kind = .eof;
+        },
         else => {
-            if (ch == '\n')
-                @panic("baka");
+            debugPrint("|{c}|{x}|\n", .{ ch, ch });
+            @panic("baka");
         },
     }
 
@@ -245,6 +268,12 @@ test "letter" {
         try std.testing.expect(!isLetter(@intCast(letter)));
 }
 
+test "token kind" {
+    const token = "and";
+    const tokenkind = TokenKind.get(token);
+    try std.testing.expect(tokenkind == .and_);
+}
+
 test "number literal" {
     const pass_cases = [_]Tuple(&.{ []const u8, TokenKind, u32 }){
         .{ "0x10 ", .hexLiteral, 0x10 },
@@ -254,10 +283,17 @@ test "number literal" {
         .{ "20000", .decLiteral, 20000 },
     };
     for (pass_cases) |case| {
-        var stream = fbs(case[0]);
+        defer _ch = ' ';
+        const str, const kind, const val = case;
+
+        var stream = fbs(str);
         const reader = stream.reader();
         const token = nextToken(reader);
-        try std.testing.expect(token.kind == case[1] and token.val() == case[2]);
+
+        //debugPrint("{s} {}", .{ str, token.kind });
+        try std.testing.expect(token.kind == kind);
+        try std.testing.expect(token.val() == val);
+        //debugPrint(":pass\n", .{});
     }
 }
 
@@ -267,6 +303,7 @@ test "identifier" {
         //.{ "hoge:", .labelDef },
     };
     for (pass_cases) |case| {
+        defer _ch = ' ';
         var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
@@ -278,6 +315,7 @@ test "identifier" {
         .{ "hoge:", .labelDef },
     };
     for (label_cases) |case| {
+        defer _ch = ' ';
         var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
@@ -301,6 +339,7 @@ test "trailing identifier" {
     };
 
     for (pass_cases) |case| {
+        defer _ch = ' ';
         const test_string, const exptd_strs, const kinds = case;
         var stream = fbs(test_string);
         const reader = stream.reader();
@@ -308,18 +347,52 @@ test "trailing identifier" {
         for (kinds, exptd_strs) |kind, exptd_str| {
             const token = nextToken(reader);
             defer tok_a.free(token.ident());
-            //std.debug.print("/{s}/\n", .{token.ident()});
-            //std.debug.print("/{s}/{d}\n", .{ token.val._buf, token.i });
             try std.testing.expect(token.kind == kind);
             try std.testing.expectEqualStrings(exptd_str, token.ident());
         }
     }
 }
+test "program" {
+    const program_str =
+        \\ld gr0, 4
+        \\jmp aiueo
+        \\hogehoge:
+        \\shl gr0, 4
+        \\jmp huga
+        \\
+        \\
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    var token = nextToken(reader);
+    while (token.kind != .eof) {
+        switch (token.kind) {
+            .decLiteral, .hexLiteral => debugPrint("{d: <9} {}\n", .{ token.val(), token.kind }),
+            else => debugPrint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+        }
+        token = nextToken(reader);
+    }
+}
 
-test "token kind" {
-    const token = "and";
-    const tokenkind = TokenKind.get(token);
-    try std.testing.expect(tokenkind == .and_);
+test "program2" {
+    const program_str =
+        \\ld gr0, 4
+        \\jmp aiueo
+        \\hogehoge:
+        \\shl gr0, 4
+        \\jmp huga
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    var token = nextToken(reader);
+    while (token.kind != .eof) {
+        switch (token.kind) {
+            .decLiteral, .hexLiteral => debugPrint("{d: <9} {}\n", .{ token.val(), token.kind }),
+            else => debugPrint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+        }
+        token = nextToken(reader);
+    }
 }
 
 const std = @import("std");
