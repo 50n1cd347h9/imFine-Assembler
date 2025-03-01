@@ -152,18 +152,23 @@ const TokenKind = enum {
 
 const Token = struct {
     kind: TokenKind,
-    val: union(enum) {
-        num: u32,
-        _buf: [MAX_IDENT_LEN]u8,
+    u: union(enum) {
+        _num: u32,
+        _buf: []u8,
     },
-    i: u8,
 
     const Self = @This();
 
     pub fn ident(self: Self) []const u8 {
-        return switch (self.val) {
-            ._buf => self.val._buf[0..@intCast(self.i)],
-            else => @panic("baka"),
+        return switch (self.u) {
+            ._buf => self.u._buf,
+            else => @panic("access violation: .u._buf not initialized"),
+        };
+    }
+    pub fn val(self: Self) u32 {
+        return switch (self.u) {
+            ._num => self.u._num,
+            else => @panic("access violation: .u._num not initialized"),
         };
     }
 };
@@ -196,6 +201,12 @@ fn streql(a: []const u8, b: []const u8) bool {
 }
 
 const MAX_IDENT_LEN = 0x20;
+const MAX_TOKEN_BUF = 0x1000;
+
+var token_buffer: [MAX_TOKEN_BUF]u8 = undefined;
+var fba = std.heap.FixedBufferAllocator.init(&token_buffer);
+var tok_a = fba.allocator();
+
 // TODO: limit skipping whitespaces by setting max spaces
 fn nextToken(reader: anytype) Token {
     var ch = nextChar(reader);
@@ -262,11 +273,10 @@ fn nextToken(reader: anytype) Token {
 
     return .{
         .kind = kind,
-        .val = switch (kind) {
-            .decLiteral, .hexLiteral => .{ .num = num },
-            else => .{ ._buf = buf },
+        .u = switch (kind) {
+            .decLiteral, .hexLiteral => .{ ._num = num },
+            else => .{ ._buf = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
         },
-        .i = @intCast(i),
     };
 }
 
@@ -344,7 +354,7 @@ test "number literal" {
         var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
-        try std.testing.expect(token.kind == case[1] and token.val.num == case[2]);
+        try std.testing.expect(token.kind == case[1] and token.val() == case[2]);
     }
 }
 
@@ -391,6 +401,7 @@ test "trailing identifier" {
     // this fails: const pass_cases: []TestCase = .{ hogehoge };
     const pass_cases = [_]TestCase{
         .{ "trailing identifier ", &.{ "trailing", "identifier" }, &.{ .label, .label } },
+        .{ "trailing: identifier ", &.{ "trailing", "identifier" }, &.{ .labelDef, .label } },
     };
 
     for (pass_cases) |case| {
@@ -400,7 +411,8 @@ test "trailing identifier" {
 
         for (kinds, exptd_strs) |kind, exptd_str| {
             const token = nextToken(reader);
-            std.debug.print("/{s}/{d}\n", .{ token.val._buf, token.i });
+            //std.debug.print("/{s}/\n", .{token.ident()});
+            //std.debug.print("/{s}/{d}\n", .{ token.val._buf, token.i });
             try std.testing.expect(token.kind == kind);
             try std.testing.expectEqualStrings(exptd_str, token.ident());
         }
