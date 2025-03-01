@@ -65,6 +65,32 @@ const TokenKind = enum {
     call,
     ret,
     nop,
+
+    const Self = @This();
+
+    pub fn get(buf: []const u8) Self {
+        return std.meta.stringToEnum(Self, buf) orelse blk: {
+            var tmp = [_]u8{'_'} ** MAX_IDENT_LEN;
+            std.mem.copyForwards(u8, &tmp, buf);
+            break :blk std.meta.stringToEnum(Self, tmp[0 .. buf.len + 1]) orelse {
+                panic("unknown tokenKind: {s}", .{buf});
+            };
+        };
+    }
+};
+
+const CharKind = enum {
+    digit,
+    letter,
+    other,
+
+    pub fn get(ch: u8) CharKind {
+        return switch (ch) {
+            'a'...'z' => CharKind.letter,
+            '0'...'9' => CharKind.digit,
+            else => CharKind.other,
+        };
+    }
 };
 
 const Token = struct {
@@ -86,20 +112,6 @@ const Token = struct {
         return switch (self.u) {
             ._num => self.u._num,
             else => @panic("access violation: .u._num not initialized"),
-        };
-    }
-};
-
-const CharKind = enum {
-    digit,
-    letter,
-    other,
-
-    pub fn get(ch: u8) CharKind {
-        return switch (ch) {
-            'a'...'z' => CharKind.letter,
-            '0'...'9' => CharKind.digit,
-            else => CharKind.other,
         };
     }
 };
@@ -177,7 +189,8 @@ fn nextToken(reader: anytype) Token {
 
             for (0..keywds.len) |k| {
                 if (streql(keywds[k], buf[0..i])) {
-                    kind = std.meta.stringToEnum(TokenKind, buf[0..i]) orelse @panic("hoge");
+                    //kind = std.meta.stringToEnum(TokenKind, buf[0..i]) orelse @panic("hoge");
+                    kind = TokenKind.get(buf[0..i]);
                     break;
                 }
             } else if (ch == ':') {
@@ -187,7 +200,8 @@ fn nextToken(reader: anytype) Token {
             }
         },
         else => {
-            @panic("baka");
+            if (ch == '\n')
+                @panic("baka");
         },
     }
 
@@ -256,6 +270,7 @@ test "identifier" {
         var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
+        defer tok_a.free(token.ident());
         try std.testing.expect(token.kind == case[1]);
         try std.testing.expectEqualStrings(case[0], token.ident());
     }
@@ -266,6 +281,7 @@ test "identifier" {
         var stream = fbs(case[0]);
         const reader = stream.reader();
         const token = nextToken(reader);
+        defer tok_a.free(token.ident());
         try std.testing.expect(token.kind == case[1]);
         try std.testing.expectEqualStrings(case[0][0 .. case[0].len - 1], token.ident());
     }
@@ -291,6 +307,7 @@ test "trailing identifier" {
 
         for (kinds, exptd_strs) |kind, exptd_str| {
             const token = nextToken(reader);
+            defer tok_a.free(token.ident());
             //std.debug.print("/{s}/\n", .{token.ident()});
             //std.debug.print("/{s}/{d}\n", .{ token.val._buf, token.i });
             try std.testing.expect(token.kind == kind);
@@ -299,8 +316,15 @@ test "trailing identifier" {
     }
 }
 
+test "token kind" {
+    const token = "and";
+    const tokenkind = TokenKind.get(token);
+    try std.testing.expect(tokenkind == .and_);
+}
+
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const debugPrint = std.debug.print;
 const fbs = std.io.fixedBufferStream;
 const Tuple = std.meta.Tuple;
+const panic = std.debug.panic;
