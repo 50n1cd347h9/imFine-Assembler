@@ -377,3 +377,32 @@ test "identifier" {
         try std.testing.expectEqualStrings(case[0][0 .. case[0].len - 1], token.ident());
     }
 }
+
+test "trailing identifier" {
+    const fbs = std.io.fixedBufferStream;
+    const Tuple = std.meta.Tuple;
+
+    const TestCase: type = Tuple(&[_]type{
+        []const u8,
+        []const []const u8,
+        []const TokenKind,
+    });
+
+    // this fails: const pass_cases: []TestCase = .{ hogehoge };
+    const pass_cases = [_]TestCase{
+        .{ "trailing identifier ", &.{ "trailing", "identifier" }, &.{ .label, .label } },
+    };
+
+    for (pass_cases) |case| {
+        const test_string, const exptd_strs, const kinds = case;
+        var stream = fbs(test_string);
+        const reader = stream.reader();
+
+        for (kinds, exptd_strs) |kind, exptd_str| {
+            const token = nextToken(reader);
+            std.debug.print("/{s}/{d}\n", .{ token.val._buf, token.i });
+            try std.testing.expect(token.kind == kind);
+            try std.testing.expectEqualStrings(exptd_str, token.ident());
+        }
+    }
+}
