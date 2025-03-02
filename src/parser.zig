@@ -54,6 +54,9 @@ fn memoryReference(reader: anytype) ParseError!void {
         },
         .decLiteral, .hexLiteral => {
             _ = readNumber(token) catch |e| break :blk e;
+            token = nextToken(reader);
+            if (token.kind != .sqbrac_r)
+                break :blk ParseError.CloseBracketExpected;
         },
         .sqbrac_r => ParseError.UnexpectedCloseBracket,
         else => ParseError.RegisterExpected,
@@ -110,6 +113,7 @@ fn insAnd(reader: anytype) ParseError!void {
     };
 }
 
+// TODO: handle macro e.g. call, ret, mov
 fn instruction(reader: anytype) ParseError!void {
     return blk: switch (token.kind) {
         .push => {
@@ -134,7 +138,7 @@ fn instruction(reader: anytype) ParseError!void {
         .or_ => {},
         .xor => {},
         .shl => {},
-        .ld => {},
+        //.ld => {},
         .cmp => {},
         .jmp => {},
         .jg => {},
@@ -267,6 +271,19 @@ test "memory ref " {
     defer testTokenizerInit();
     const program_str =
         \\push [gr0]
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try program(reader);
+}
+
+test "memory ref imm " {
+    runTest("-- memory ref imm --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\push [100]
         \\
     ;
     var stream = fbs(program_str);
