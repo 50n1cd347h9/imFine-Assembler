@@ -11,23 +11,9 @@ const ParseError = error{
     RegisterExpected,
     NewlineExpected,
     UnexpectedEof,
+    CloseBracketExpected,
+    UnexpectedCloseBracket,
 };
-
-fn insPush(reader: anytype) void {
-    _ = reader;
-}
-
-fn insAnd(reader: anytype) ParseError!void {
-    switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {
-            token = nextToken(reader);
-            readComma(token) catch |e| return e;
-            token = nextToken(reader);
-            _ = readNumber(token) catch |e| return e;
-        },
-        else => return error.RegisterExpected,
-    }
-}
 
 fn readComma(_token: Token) ParseError!void {
     if (_token.kind != .comma)
@@ -58,15 +44,71 @@ fn readNlOrEof(_token: Token) ParseError!void {
 
 fn labelDef(_: anytype) void {}
 
+fn memoryReference(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {
+            token = nextToken(reader);
+            if (token.kind != .sqbrac_r)
+                return ParseError.CloseBracketExpected;
+        },
+        .decLiteral, .hexLiteral => {
+            _ = readNumber(token) catch |e| return e;
+        },
+        .sqbrac_r => return ParseError.UnexpectedCloseBracket,
+        else => return ParseError.RegisterExpected,
+    }
+}
+
+fn insPush(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {},
+        .decLiteral, .hexLiteral => {
+            _ = readNumber(token) catch |e| return e;
+        },
+        .sqbrac_l => {
+            token = nextToken(reader);
+            memoryReference(reader) catch |e| return e;
+        },
+        else => return ParseError.RegisterExpected,
+    }
+}
+
+fn insAdd(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {
+            token = nextToken(reader);
+            readComma(token) catch |e| return e;
+            token = nextToken(reader);
+            _ = readNumber(token) catch |e| return e;
+        },
+        else => return ParseError.RegisterExpected,
+    }
+}
+
+fn insAnd(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {
+            token = nextToken(reader);
+            readComma(token) catch |e| return e;
+            token = nextToken(reader);
+            _ = readNumber(token) catch |e| return e;
+        },
+        else => return error.RegisterExpected,
+    }
+}
+
 fn instruction(reader: anytype) ParseError!void {
     //dbgprint("tok: {s}\n", .{token.ident()});
     switch (token.kind) {
         .push => {
             token = nextToken(reader);
-            insPush(reader);
+            insPush(reader) catch |e| return e;
         },
         .pop => {},
-        .add => {},
+        .add => {
+            token = nextToken(reader);
+            insAdd(reader) catch |e| return e;
+        },
         .sub => {},
         .mul => {},
         .div => {},
@@ -97,25 +139,21 @@ fn program(reader: anytype) ParseError!void {
         token = nextToken(reader);
 
     while (true) {
-        //dbgprint("{}\n", .{token.kind});
         switch (token.kind) {
-            .newline => {
-                token = nextToken(reader);
-            },
+            .newline => {},
             .labelDef => {
                 labelDef(reader);
                 token = nextToken(reader);
                 readNewline(token) catch |e| return e;
-                token = nextToken(reader);
             },
             .eof => break,
             else => {
                 instruction(reader) catch |e| return e;
                 token = nextToken(reader);
                 readNlOrEof(token) catch |e| return e;
-                token = nextToken(reader);
             },
         }
+        token = nextToken(reader);
     }
 }
 
@@ -208,6 +246,44 @@ test "instruction expected" {
     try expectError(ParseError.InstructionExpected, program(reader));
 }
 
+test "memory ref " {
+    runTest("-- memory ref --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\push [gr0]
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try program(reader);
+}
+
+test "close expected" {
+    runTest("-- close expected --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\push [gr0
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.CloseBracketExpected, program(reader));
+}
+
+test "unexpected close " {
+    runTest("-- unexpected close --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\push []
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.UnexpectedCloseBracket, program(reader));
+}
 test "and instruction fail" {
     runTest("-- and instruction fail --");
 

@@ -35,6 +35,8 @@ const TokenKind = enum {
     nop,
     newline,
     eof,
+    sqbrac_l,
+    sqbrac_r,
 
     const Self = @This();
     pub fn get(buf: []const u8) ?Self {
@@ -54,12 +56,17 @@ const CharKind = enum {
     newline,
     colon,
     other,
+    sqbrac_l,
+    sqbrac_r,
 
+    // TODO: define comment(#)
     const Self = @This();
     pub fn get(ch: u8) Self {
         return switch (ch) {
             'a'...'z', 'A'...'Z' => .letter,
             '0'...'9' => .digit,
+            '[' => .sqbrac_l,
+            ']' => .sqbrac_r,
             '\n' => .newline,
             ',' => .comma,
             ':' => .colon,
@@ -203,6 +210,14 @@ pub fn nextToken(reader: anytype) Token {
             kind = .comma;
             ch = nextChar(reader);
         },
+        .sqbrac_l => {
+            kind = .sqbrac_l;
+            ch = nextChar(reader);
+        },
+        .sqbrac_r => {
+            kind = .sqbrac_r;
+            ch = nextChar(reader);
+        },
         .eof => {
             kind = .eof;
         },
@@ -261,6 +276,8 @@ test "token kind" {
         .{ "ld", .ld },
         .{ "xor", .xor },
         .{ "call", .call },
+        .{ "[", .sqbrac_l },
+        .{ "]", .sqbrac_r },
     };
 
     for (pass_cases) |case| {
