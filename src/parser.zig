@@ -7,8 +7,10 @@ const ParseError = error{
     CommaExpected,
     InstructionExpected,
     TokenAfterInstruction,
-    NumberLiteralExpected,
+    NumberExpected,
     RegisterExpected,
+    NewLineExpected,
+    UnexpectedEof,
 };
 
 fn insPush(reader: anytype) void {
@@ -21,12 +23,7 @@ fn insAnd(reader: anytype) ParseError!void {
             token = nextToken(reader);
             readComma(token) catch |e| return e;
             token = nextToken(reader);
-            switch (token.kind) {
-                .decLiteral, .hexLiteral => {
-                    _ = 1;
-                },
-                else => return error.NumberLiteralExpected,
-            }
+            _ = readNumber(token) catch |e| return e;
         },
         else => return error.RegisterExpected,
     }
@@ -35,6 +32,28 @@ fn insAnd(reader: anytype) ParseError!void {
 fn readComma(_token: Token) ParseError!void {
     if (_token.kind != .comma)
         return error.CommaExpected;
+}
+
+fn readNumber(_token: Token) ParseError!u32 {
+    return switch (_token.kind) {
+        .decLiteral, .hexLiteral => _token.val(),
+        else => error.NumberExpected,
+    };
+}
+
+fn readNewline(_token: Token) ParseError!void {
+    return switch (_token.kind) {
+        .newline => {},
+        .eof => error.UnexpectedEof,
+        else => error.NewLineExpected,
+    };
+}
+
+fn readNlOrEof(_token: Token) ParseError!void {
+    return switch (_token.kind) {
+        .newline, .eof => {},
+        else => ParseError.TokenAfterInstruction,
+    };
 }
 
 fn labelDef(_: anytype) void {}
@@ -84,20 +103,18 @@ fn program(reader: anytype) ParseError!void {
                 token = nextToken(reader);
             },
             .labelDef => {
-                @panic("labelDef");
-                //token = nextToken(reader);
-                //labelDef(reader);
+                //@panic("labelDef");
+                labelDef(reader);
+                token = nextToken(reader);
+                readNewline(token) catch |e| return e;
+                token = nextToken(reader);
             },
             .eof => break,
             else => {
                 instruction(reader) catch |e| return e;
                 token = nextToken(reader);
-                switch (token.kind) {
-                    .newline, .eof => {
-                        token = nextToken(reader);
-                    },
-                    else => return error.TokenAfterInstruction,
-                }
+                readNlOrEof(token) catch |e| return e;
+                token = nextToken(reader);
             },
         }
     }
@@ -114,6 +131,43 @@ test "and instruction" {
     var stream = fbs(program_str);
     const reader = stream.reader();
     try program(reader);
+}
+
+test "newline expected" {
+    runTest("-- newline expected --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\hoge:ahi
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.NewLineExpected, program(reader));
+}
+
+test "unexpected eof" {
+    runTest("-- unexpected eof --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\hoge:
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.UnexpectedEof, program(reader));
+}
+
+test "number expected" {
+    runTest("-- number expected --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\and gr0, x
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.NumberExpected, program(reader));
 }
 
 test "comma expected" {
