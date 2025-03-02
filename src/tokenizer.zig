@@ -1,41 +1,7 @@
-const MAX_IDENT_LEN = 0x20;
-const MAX_TOKEN_BUF = 0x1000;
 var token_buffer: [MAX_TOKEN_BUF]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&token_buffer);
 var tok_a = fba.allocator();
-const EOF = ~@as(u8, @intCast(0));
 
-const instructions = [_][]const u8{
-    "push",
-    "pop",
-    "add",
-    "sub",
-    "mul",
-    "div",
-    "and",
-    "or",
-    "xor",
-    "shl",
-    "ld",
-    "cmp",
-    "jmp",
-    "jg",
-    "jz",
-    "jl",
-    "call",
-    "ret",
-    "nop",
-};
-const registers = [_][]const u8{
-    "ip",
-    "sp",
-    "fp",
-    "flag",
-    "gr0",
-    "gr1",
-};
-
-const keywds = instructions ++ registers;
 const TokenKind = enum {
     label,
     labelDef,
@@ -72,13 +38,11 @@ const TokenKind = enum {
 
     const Self = @This();
 
-    pub fn get(buf: []const u8) Self {
+    pub fn get(buf: []const u8) ?Self {
         return std.meta.stringToEnum(Self, buf) orelse blk: {
             var tmp = [_]u8{'_'} ** MAX_IDENT_LEN;
             std.mem.copyForwards(u8, &tmp, buf);
-            break :blk std.meta.stringToEnum(Self, tmp[0 .. buf.len + 1]) orelse {
-                panic("unknown tokenKind: {s}", .{buf});
-            };
+            break :blk std.meta.stringToEnum(Self, tmp[0 .. buf.len + 1]);
         };
     }
 };
@@ -131,6 +95,22 @@ const Token = struct {
     }
 };
 
+fn isRegister(token: []const u8) bool {
+    for (registers) |register|
+        return streql(token, register);
+    return false;
+}
+
+fn isInstruction(token: []const u8) bool {
+    for (instructions) |instruction|
+        return streql(token, instruction);
+    return false;
+}
+
+fn isKeyword(token: []const u8) bool {
+    return isRegister(token) or isInstruction(token);
+}
+
 fn streql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
@@ -160,7 +140,7 @@ fn nextToken(reader: anytype) Token {
     var num: u32 = 0;
     var buf: [MAX_IDENT_LEN]u8 = [_]u8{0} ** MAX_IDENT_LEN;
     var i: usize = 0;
-    var ch = _ch;
+    var ch = if (_ch == EOF) ' ' else _ch;
     defer _ch = ch;
 
     while (ch == ' ' or ch == '\t')
@@ -202,11 +182,13 @@ fn nextToken(reader: anytype) Token {
                 ch = nextChar(reader);
             }
 
-            for (0..keywds.len) |k| {
-                if (streql(keywds[k], buf[0..i])) {
-                    kind = TokenKind.get(buf[0..i]);
-                    break;
-                }
+            //if (isRegister(buf[0..i])) {
+            //    kind = .register;
+            //} else if (isInstruction(buf[0..i])) {
+            //    kind = .instruction;
+
+            if (TokenKind.get(buf[0..i])) |_kind| {
+                kind = _kind;
             } else if (ch == ':') {
                 kind = .labelDef;
                 ch = nextChar(reader);
@@ -227,7 +209,7 @@ fn nextToken(reader: anytype) Token {
         },
         else => {
             debugPrint("|{c}|{x}|\n", .{ ch, ch });
-            @panic("baka");
+            @panic("character unaccepted");
         },
     }
 
@@ -238,20 +220,6 @@ fn nextToken(reader: anytype) Token {
             else => .{ ._ident = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
         },
     };
-}
-
-fn runTest(testname: []const u8) void {
-    dbgprint("{s}\n", .{testname});
-}
-
-fn TestCase(comptime Expected: anytype) type {
-    return Tuple(&[_]type{
-        []const u8, // input
-        switch (@typeInfo(@TypeOf(Expected))) {
-            .@"struct" => Tuple(&Expected),
-            else => Expected,
-        },
-    });
 }
 
 test "digit" {
@@ -292,11 +260,14 @@ test "token kind" {
         .{ "and", .and_ },
         .{ "or", .or_ },
         .{ "ld", .ld },
+        .{ "xor", .xor },
+        .{ "call", .call },
     };
 
     for (pass_cases) |case| {
         const input, const kind = case;
-        try std.testing.expect(TokenKind.get(input) == kind);
+        if (TokenKind.get(input)) |_kind|
+            try std.testing.expect(_kind == kind);
     }
 }
 
@@ -311,7 +282,6 @@ test "number literal" {
         .{ "20000", .{ .decLiteral, 20000 } },
     };
     for (pass_cases) |case| {
-        defer _ch = ' ';
         const input, const expected = case;
         const kind, const val = expected;
 
@@ -337,7 +307,6 @@ test "identifier" {
     _ = TestCase(hoge);
 
     for (pass_cases) |case| {
-        defer _ch = ' ';
         const input, const expected = case;
         const exptd_str, const kind = expected;
         var stream = fbs(input);
@@ -364,7 +333,6 @@ test "trailing identifier" {
     };
 
     for (pass_cases) |case| {
-        defer _ch = ' ';
         const input, const expected = case;
         const strs, const kinds = expected;
         var stream = fbs(input);
@@ -428,9 +396,18 @@ test "program2" {
 }
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
+const property = @import("property.zig");
+const consts = @import("consts.zig");
+const registers = consts.registers;
+const instructions = consts.instructions;
 const debugPrint = std.debug.print;
 const dbgprint = std.debug.print;
 const fbs = std.io.fixedBufferStream;
 const Tuple = std.meta.Tuple;
 const panic = std.debug.panic;
+const TestCase = property.TestCase;
+const runTest = property.runTest;
+const MAX_IDENT_LEN = consts.MAX_IDENT_LEN;
+const MAX_TOKEN_BUF = consts.MAX_TOKEN_BUF;
+const EOF = consts.EOF;
+const keywds = consts.keywds;
