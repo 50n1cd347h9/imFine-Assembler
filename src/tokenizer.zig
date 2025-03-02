@@ -69,7 +69,7 @@ const CharKind = enum {
     }
 };
 
-const Token = struct {
+pub const Token = struct {
     kind: TokenKind,
     u: union(enum) {
         _val: u32,
@@ -134,13 +134,18 @@ fn nextChar(reader: anytype) u8 {
     return reader.readByte() catch EOF;
 }
 
+pub fn testTokenizerInit() void {
+    _ch = ' ';
+}
+
 var _ch: u8 = ' ';
-fn nextToken(reader: anytype) Token {
+pub fn nextToken(reader: anytype) Token {
     var kind: TokenKind = undefined;
     var num: u32 = 0;
     var buf: [MAX_IDENT_LEN]u8 = [_]u8{0} ** MAX_IDENT_LEN;
     var i: usize = 0;
-    var ch = if (_ch == EOF) ' ' else _ch;
+    //var ch = if (_ch == EOF) ' ' else _ch;
+    var ch = _ch;
     defer _ch = ch;
 
     while (ch == ' ' or ch == '\t')
@@ -265,6 +270,7 @@ test "token kind" {
     };
 
     for (pass_cases) |case| {
+        defer testTokenizerInit();
         const input, const kind = case;
         if (TokenKind.get(input)) |_kind|
             try std.testing.expect(_kind == kind);
@@ -288,6 +294,7 @@ test "number literal" {
         .{ "20000", .{ .decLiteral, 20000 } },
     };
     for (pass_cases) |case| {
+        defer testTokenizerInit();
         const input, const expected = case;
         const kind, const val = expected;
 
@@ -313,6 +320,7 @@ test "identifier" {
     _ = TestCase(hoge);
 
     for (pass_cases) |case| {
+        defer testTokenizerInit();
         const input, const expected = case;
         const exptd_str, const kind = expected;
         var stream = fbs(input);
@@ -339,6 +347,7 @@ test "trailing identifier" {
     };
 
     for (pass_cases) |case| {
+        defer testTokenizerInit();
         const input, const expected = case;
         const strs, const kinds = expected;
         var stream = fbs(input);
@@ -358,6 +367,7 @@ test "trailing identifier" {
 
 test "program" {
     runTest("-- program --");
+    defer testTokenizerInit();
     const program_str =
         \\ld gr0, 4
         \\jmp aiueo
@@ -382,6 +392,7 @@ test "program" {
 
 test "program2" {
     runTest("-- program2 --");
+    defer testTokenizerInit();
     const program_str =
         \\ld gr0, 4
         \\jmp aiueo
@@ -398,6 +409,32 @@ test "program2" {
             else => debugPrint("{s: <9} {}\n", .{ token.ident(), token.kind }),
         }
         token = nextToken(reader);
+    }
+}
+
+test "and instruction" {
+    runTest("-- program --");
+
+    const program_str =
+        \\and gr0, 1 
+        \\
+    ;
+    const Expected = []const TokenKind;
+    const pass_cases = [_]TestCase(Expected){
+        .{ program_str, &.{ .and_, .gr0, .comma, .decLiteral, .newline, .eof } },
+    };
+
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    for (pass_cases) |case| {
+        defer testTokenizerInit();
+        _, const expected = case;
+
+        for (expected) |kind| {
+            const token = nextToken(reader);
+            dbgprint("e: {}, a: {}\n", .{ kind, token.kind });
+            try std.testing.expect(token.kind == kind);
+        }
     }
 }
 

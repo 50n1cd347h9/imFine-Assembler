@@ -3,77 +3,167 @@
 
 var token: Token = undefined;
 
+const ParseError = error{
+    CommaExpected,
+    InstructionExpected,
+    TokenAfterInstruction,
+    NumberLiteralExpected,
+    RegisterExpected,
+};
+
 fn insPush(reader: anytype) void {
     _ = reader;
 }
-fn insAnd() void {}
+
+fn insAnd(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {
+            token = nextToken(reader);
+            readComma(token) catch |e| return e;
+            token = nextToken(reader);
+            switch (token.kind) {
+                .decLiteral, .hexLiteral => {
+                    _ = 1;
+                },
+                else => return error.NumberLiteralExpected,
+            }
+        },
+        else => return error.RegisterExpected,
+    }
+}
+
+fn readComma(_token: Token) ParseError!void {
+    if (_token.kind != .comma)
+        return error.CommaExpected;
+}
 
 fn labelDef(_: anytype) void {}
 
-fn instruction(reader: anytype) void {
+fn instruction(reader: anytype) ParseError!void {
+    //dbgprint("tok: {s}\n", .{token.ident()});
     switch (token.kind) {
         .push => {
             token = nextToken(reader);
             insPush(reader);
         },
-        .And => {
+        .pop => {},
+        .add => {},
+        .sub => {},
+        .mul => {},
+        .div => {},
+        .and_ => {
             token = nextToken(reader);
-            insAnd(reader);
+            insAnd(reader) catch |e| return e;
         },
-        else => @panic("unknown instruction"),
+        .or_ => {},
+        .xor => {},
+        .shl => {},
+        .ld => {},
+        .cmp => {},
+        .jmp => {},
+        .jg => {},
+        .jz => {},
+        .jl => {},
+        .call => {},
+        .ret => {},
+        .nop => {},
+        else => return error.InstructionExpected,
     }
 }
 
-fn program(reader: anytype) void {
+fn program(reader: anytype) ParseError!void {
     token = nextToken(reader);
 
     while (token.kind == .newline)
         token = nextToken(reader);
 
     while (true) {
+        //dbgprint("{}\n", .{token.kind});
         switch (token.kind) {
             .newline => {
                 token = nextToken(reader);
             },
             .labelDef => {
-                token = nextToken(reader);
-                labelDef(reader);
+                @panic("labelDef");
+                //token = nextToken(reader);
+                //labelDef(reader);
             },
             .eof => break,
             else => {
-                instruction(reader);
+                instruction(reader) catch |e| return e;
+                token = nextToken(reader);
+                switch (token.kind) {
+                    .newline, .eof => {
+                        token = nextToken(reader);
+                    },
+                    else => return error.TokenAfterInstruction,
+                }
             },
-            //else => @panic("unknow token"),
         }
     }
 }
 
-test "program" {
+test "and instruction" {
     runTest("-- program --");
+
+    defer testTokenizerInit();
     const program_str =
-        \\ld gr0, 4
-        \\jmp aiueo
-        \\hogehoge:
-        \\shl gr0, 4
-        \\jmp huga
+        \\and gr0, 1 
+        \\
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    _ = reader;
-    //var token = nextToken(reader);
-    //while (token.kind != .eof) {
-    //    switch (token.kind) {
-    //        .decLiteral, .hexLiteral => dbgprint("{d: <9} {}\n", .{ token.val(), token.kind }),
-    //        else => dbgprint("{s: <9} {}\n", .{ token.ident(), token.kind }),
-    //    }
-    //    token = nextToken(reader);
-    //}
+    try program(reader);
 }
+
+test "comma expected" {
+    runTest("-- comma expected --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\and gr0 1
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.CommaExpected, program(reader));
+}
+
+test "instruction expected" {
+    runTest("-- instruction expected --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\gr0 1
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.InstructionExpected, program(reader));
+}
+
+test "and instruction fail" {
+    runTest("-- and instruction fail --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\and gr0, 1  ddd
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.TokenAfterInstruction, program(reader));
+}
+
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
 const property = @import("property.zig");
 const Token = tokenizer.Token;
+const testTokenizerInit = tokenizer.testTokenizerInit;
 const runTest = property.runTest;
 const nextToken = tokenizer.nextToken;
 const fbs = std.io.fixedBufferStream;
 const dbgprint = std.debug.print;
+const panic = std.debug.panic;
+const expect = std.testing.expect;
+const expectError = std.testing.expectError;

@@ -1,6 +1,7 @@
 pub const EOF = ~@as(u8, @intCast(0));
 pub const MAX_IDENT_LEN = 0x20;
 pub const MAX_TOKEN_BUF = 0x1000;
+pub const MAX_LABEL_BUF = 0x1000;
 pub const instructions = [_][]const u8{
     "push",
     "pop",
