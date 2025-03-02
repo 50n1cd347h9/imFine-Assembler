@@ -58,7 +58,7 @@ const CharKind = enum {
     const Self = @This();
     pub fn get(ch: u8) Self {
         return switch (ch) {
-            'a'...'z' => .letter,
+            'a'...'z', 'A'...'Z' => .letter,
             '0'...'9' => .digit,
             '\n' => .newline,
             ',' => .comma,

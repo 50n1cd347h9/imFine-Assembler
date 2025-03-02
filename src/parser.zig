@@ -103,7 +103,6 @@ fn program(reader: anytype) ParseError!void {
                 token = nextToken(reader);
             },
             .labelDef => {
-                //@panic("labelDef");
                 labelDef(reader);
                 token = nextToken(reader);
                 readNewline(token) catch |e| return e;
@@ -168,6 +167,19 @@ test "number expected" {
     var stream = fbs(program_str);
     const reader = stream.reader();
     try expectError(ParseError.NumberExpected, program(reader));
+}
+
+test "register expected" {
+    runTest("-- register expected --");
+
+    defer testTokenizerInit();
+    const program_str =
+        \\and XX, 1
+        \\
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try expectError(ParseError.RegisterExpected, program(reader));
 }
 
 test "comma expected" {
