@@ -37,7 +37,6 @@ const TokenKind = enum {
     eof,
 
     const Self = @This();
-
     pub fn get(buf: []const u8) ?Self {
         return std.meta.stringToEnum(Self, buf) orelse blk: {
             var tmp = [_]u8{'_'} ** MAX_IDENT_LEN;
@@ -56,7 +55,8 @@ const CharKind = enum {
     colon,
     other,
 
-    pub fn get(ch: u8) CharKind {
+    const Self = @This();
+    pub fn get(ch: u8) Self {
         return switch (ch) {
             'a'...'z' => .letter,
             '0'...'9' => .digit,
@@ -144,7 +144,6 @@ pub fn nextToken(reader: anytype) Token {
     var num: u32 = 0;
     var buf: [MAX_IDENT_LEN]u8 = [_]u8{0} ** MAX_IDENT_LEN;
     var i: usize = 0;
-    //var ch = if (_ch == EOF) ' ' else _ch;
     var ch = _ch;
     defer _ch = ch;
 
@@ -186,11 +185,6 @@ pub fn nextToken(reader: anytype) Token {
                 i += 1;
                 ch = nextChar(reader);
             }
-
-            //if (isRegister(buf[0..i])) {
-            //    kind = .register;
-            //} else if (isInstruction(buf[0..i])) {
-            //    kind = .instruction;
 
             if (TokenKind.get(buf[0..i])) |_kind| {
                 kind = _kind;

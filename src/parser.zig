@@ -9,7 +9,7 @@ const ParseError = error{
     TokenAfterInstruction,
     NumberExpected,
     RegisterExpected,
-    NewLineExpected,
+    NewlineExpected,
     UnexpectedEof,
 };
 
@@ -45,7 +45,7 @@ fn readNewline(_token: Token) ParseError!void {
     return switch (_token.kind) {
         .newline => {},
         .eof => error.UnexpectedEof,
-        else => error.NewLineExpected,
+        else => error.NewlineExpected,
     };
 }
 
@@ -142,7 +142,7 @@ test "newline expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.NewLineExpected, program(reader));
+    try expectError(ParseError.NewlineExpected, program(reader));
 }
 
 test "unexpected eof" {
