@@ -13,6 +13,7 @@ const ParseError = error{
     UnexpectedEof,
     CloseBracketExpected,
     UnexpectedCloseBracket,
+    CannotPopIntoImmediate,
 };
 
 fn readComma(_token: Token) ParseError!void {
@@ -45,76 +46,90 @@ fn readNlOrEof(_token: Token) ParseError!void {
 fn labelDef(_: anytype) void {}
 
 fn memoryReference(reader: anytype) ParseError!void {
-    switch (token.kind) {
+    return blk: switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
             token = nextToken(reader);
             if (token.kind != .sqbrac_r)
-                return ParseError.CloseBracketExpected;
+                break :blk ParseError.CloseBracketExpected;
         },
         .decLiteral, .hexLiteral => {
-            _ = readNumber(token) catch |e| return e;
+            _ = readNumber(token) catch |e| break :blk e;
         },
-        .sqbrac_r => return ParseError.UnexpectedCloseBracket,
-        else => return ParseError.RegisterExpected,
-    }
+        .sqbrac_r => ParseError.UnexpectedCloseBracket,
+        else => ParseError.RegisterExpected,
+    };
 }
 
 fn insPush(reader: anytype) ParseError!void {
-    switch (token.kind) {
+    return blk: switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {},
         .decLiteral, .hexLiteral => {
-            _ = readNumber(token) catch |e| return e;
+            _ = readNumber(token) catch |e| break :blk e;
         },
         .sqbrac_l => {
             token = nextToken(reader);
-            memoryReference(reader) catch |e| return e;
+            memoryReference(reader) catch |e| break :blk e;
         },
-        else => return ParseError.RegisterExpected,
-    }
+        else => ParseError.RegisterExpected,
+    };
+}
+
+fn insPop(reader: anytype) ParseError!void {
+    return blk: switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {},
+        .sqbrac_l => {
+            token = nextToken(reader);
+            memoryReference(reader) catch |e| break :blk e;
+        },
+        .decLiteral, .hexLiteral => ParseError.CannotPopIntoImmediate,
+        else => ParseError.RegisterExpected,
+    };
 }
 
 fn insAdd(reader: anytype) ParseError!void {
-    switch (token.kind) {
+    return blk: switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
             token = nextToken(reader);
-            readComma(token) catch |e| return e;
+            readComma(token) catch |e| break :blk e;
             token = nextToken(reader);
-            _ = readNumber(token) catch |e| return e;
+            _ = readNumber(token) catch |e| break :blk e;
         },
-        else => return ParseError.RegisterExpected,
-    }
+        else => ParseError.RegisterExpected,
+    };
 }
 
 fn insAnd(reader: anytype) ParseError!void {
-    switch (token.kind) {
+    return blk: switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
             token = nextToken(reader);
-            readComma(token) catch |e| return e;
+            readComma(token) catch |e| break :blk e;
             token = nextToken(reader);
-            _ = readNumber(token) catch |e| return e;
+            _ = readNumber(token) catch |e| break :blk e;
         },
-        else => return error.RegisterExpected,
-    }
+        else => error.RegisterExpected,
+    };
 }
 
 fn instruction(reader: anytype) ParseError!void {
-    //dbgprint("tok: {s}\n", .{token.ident()});
-    switch (token.kind) {
+    return blk: switch (token.kind) {
         .push => {
             token = nextToken(reader);
-            insPush(reader) catch |e| return e;
+            insPush(reader) catch |e| break :blk e;
         },
-        .pop => {},
+        .pop => {
+            token = nextToken(reader);
+            insPop(reader) catch |e| break :blk e;
+        },
         .add => {
             token = nextToken(reader);
-            insAdd(reader) catch |e| return e;
+            insAdd(reader) catch |e| break :blk e;
         },
         .sub => {},
         .mul => {},
         .div => {},
         .and_ => {
             token = nextToken(reader);
-            insAnd(reader) catch |e| return e;
+            insAnd(reader) catch |e| break :blk e;
         },
         .or_ => {},
         .xor => {},
@@ -128,8 +143,8 @@ fn instruction(reader: anytype) ParseError!void {
         .call => {},
         .ret => {},
         .nop => {},
-        else => return error.InstructionExpected,
-    }
+        else => error.InstructionExpected,
+    };
 }
 
 fn program(reader: anytype) ParseError!void {
@@ -138,23 +153,23 @@ fn program(reader: anytype) ParseError!void {
     while (token.kind == .newline)
         token = nextToken(reader);
 
-    while (true) {
+    return blk: while (true) {
         switch (token.kind) {
             .newline => {},
             .labelDef => {
                 labelDef(reader);
                 token = nextToken(reader);
-                readNewline(token) catch |e| return e;
+                readNewline(token) catch |e| break :blk e;
             },
             .eof => break,
             else => {
-                instruction(reader) catch |e| return e;
+                instruction(reader) catch |e| break :blk e;
                 token = nextToken(reader);
-                readNlOrEof(token) catch |e| return e;
+                readNlOrEof(token) catch |e| break :blk e;
             },
         }
         token = nextToken(reader);
-    }
+    };
 }
 
 test "and instruction" {
