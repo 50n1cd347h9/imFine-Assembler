@@ -108,21 +108,24 @@ const CharKind = enum {
 const Token = struct {
     kind: TokenKind,
     u: union(enum) {
-        _num: u32,
-        _buf: []u8,
+        _val: u32,
+        _ident: []u8,
     },
 
     const Self = @This();
 
+    //pub fn set(tmp: anytype) void {
+    //    _ = tmp;
+    //}
     pub fn ident(self: Self) []const u8 {
         return switch (self.u) {
-            ._buf => self.u._buf,
+            ._ident => self.u._ident,
             else => @panic("access violation: .u._buf not initialized"),
         };
     }
     pub fn val(self: Self) u32 {
         return switch (self.u) {
-            ._num => self.u._num,
+            ._val => self.u._val,
             else => @panic("access violation: .u._num not initialized"),
         };
     }
@@ -231,8 +234,8 @@ fn nextToken(reader: anytype) Token {
     return .{
         .kind = kind,
         .u = switch (kind) {
-            .decLiteral, .hexLiteral => .{ ._num = num },
-            else => .{ ._buf = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
+            .decLiteral, .hexLiteral => .{ ._val = num },
+            else => .{ ._ident = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
         },
     };
 }
@@ -244,49 +247,57 @@ fn runTest(testname: []const u8) void {
 fn TestCase(comptime Expected: anytype) type {
     return Tuple(&[_]type{
         []const u8, // input
-        Tuple(&Expected),
+        switch (@typeInfo(@TypeOf(Expected))) {
+            .@"struct" => Tuple(&Expected),
+            else => Expected,
+        },
     });
 }
 
 test "digit" {
     runTest("-- digit --");
-    const digits = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
-    for (digits) |digit|
-        try std.testing.expect(isDigit(digit));
 
-    const fail_case = [_]u8{ ':', '/', '`', 'g' };
-    for (fail_case) |ch|
+    for (0..10) |i|
+        try std.testing.expect(isDigit(@intCast('0' + i)));
+    for ([_]u8{ ':', '/', '`', 'g' }) |ch|
         try std.testing.expect(!isDigit(ch));
 }
 
 test "hex" {
     runTest("-- hex --");
-    const hexes = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
-    for (hexes) |hex|
-        try std.testing.expect(isHex(hex));
 
-    const fail_case = [_]u8{ ':', '/', '`', 'g' };
-    for (fail_case) |ch|
+    for (0..10) |i|
+        try std.testing.expect(isHex(@intCast('0' + i)));
+    for (0..6) |i|
+        try std.testing.expect(isHex(@intCast('a' + i)));
+    for ([_]u8{ ':', '/', '`', 'g' }) |ch|
         try std.testing.expect(!isHex(ch));
 }
 
 test "letter" {
     runTest("-- letter --");
+
     for ('A'..'Z' + 1) |letter|
         try std.testing.expect(isLetter(@intCast(letter)));
     for ('a'..'z' + 1) |letter|
         try std.testing.expect(isLetter(@intCast(letter)));
-
-    const failcase = [_]u8{ ':', '.', '`', '_' };
-    for (failcase) |letter|
+    for ([_]u8{ ':', '.', '`', '_' }) |letter|
         try std.testing.expect(!isLetter(@intCast(letter)));
 }
 
 test "token kind" {
     runTest("-- token kind --");
-    const token = "and";
-    const tokenkind = TokenKind.get(token);
-    try std.testing.expect(tokenkind == .and_);
+
+    const pass_cases = [_]TestCase(TokenKind){
+        .{ "and", .and_ },
+        .{ "or", .or_ },
+        .{ "ld", .ld },
+    };
+
+    for (pass_cases) |case| {
+        const input, const kind = case;
+        try std.testing.expect(TokenKind.get(input) == kind);
+    }
 }
 
 test "number literal" {
@@ -316,34 +327,26 @@ test "number literal" {
 test "identifier" {
     runTest("-- identifier --");
 
-    const Expected = .{TokenKind};
+    const Expected = .{ []const u8, TokenKind };
     const pass_cases = [_]TestCase(Expected){
-        .{ "hoge", .{.label} },
-        //.{ "hoge:", .labelDef },
+        .{ "hoge", .{ "hoge", .label } },
+        .{ "hoge:", .{ "hoge", .labelDef } },
     };
+
+    const hoge = u8;
+    _ = TestCase(hoge);
+
     for (pass_cases) |case| {
         defer _ch = ' ';
         const input, const expected = case;
-        const kind = expected[0];
+        const exptd_str, const kind = expected;
         var stream = fbs(input);
         const reader = stream.reader();
         const token = nextToken(reader);
         defer tok_a.free(token.ident());
 
         try std.testing.expect(token.kind == kind);
-        try std.testing.expectEqualStrings(input, token.ident());
-    }
-    const label_cases = [_]Tuple(&.{ []const u8, TokenKind }){
-        .{ "hoge:", .labelDef },
-    };
-    for (label_cases) |case| {
-        defer _ch = ' ';
-        var stream = fbs(case[0]);
-        const reader = stream.reader();
-        const token = nextToken(reader);
-        defer tok_a.free(token.ident());
-        try std.testing.expect(token.kind == case[1]);
-        try std.testing.expectEqualStrings(case[0][0 .. case[0].len - 1], token.ident());
+        try std.testing.expectEqualStrings(exptd_str, token.ident());
     }
 }
 
@@ -371,13 +374,14 @@ test "trailing identifier" {
             const token = nextToken(reader);
             const ident = token.ident();
             defer tok_a.free(ident);
-            dbgprint("{s} => {s}\n", .{ exptd_str, ident });
-            dbgprint("{any} => {any}\n", .{ exptd_str, ident });
+            //dbgprint("{s} => {s}\n", .{ exptd_str, ident });
+            //dbgprint("{any} => {any}\n", .{ exptd_str, ident });
             try std.testing.expect(token.kind == kind);
             try std.testing.expectEqualStrings(exptd_str, ident);
         }
     }
 }
+
 test "program" {
     runTest("-- program --");
     const program_str =
