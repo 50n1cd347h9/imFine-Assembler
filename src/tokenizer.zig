@@ -237,7 +237,19 @@ fn nextToken(reader: anytype) Token {
     };
 }
 
+fn runTest(testname: []const u8) void {
+    dbgprint("{s}\n", .{testname});
+}
+
+fn TestCase(comptime Expected: anytype) type {
+    return Tuple(&[_]type{
+        []const u8, // input
+        Tuple(&Expected),
+    });
+}
+
 test "digit" {
+    runTest("-- digit --");
     const digits = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
     for (digits) |digit|
         try std.testing.expect(isDigit(digit));
@@ -248,6 +260,7 @@ test "digit" {
 }
 
 test "hex" {
+    runTest("-- hex --");
     const hexes = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
     for (hexes) |hex|
         try std.testing.expect(isHex(hex));
@@ -258,6 +271,7 @@ test "hex" {
 }
 
 test "letter" {
+    runTest("-- letter --");
     for ('A'..'Z' + 1) |letter|
         try std.testing.expect(isLetter(@intCast(letter)));
     for ('a'..'z' + 1) |letter|
@@ -269,47 +283,55 @@ test "letter" {
 }
 
 test "token kind" {
+    runTest("-- token kind --");
     const token = "and";
     const tokenkind = TokenKind.get(token);
     try std.testing.expect(tokenkind == .and_);
 }
 
 test "number literal" {
-    const pass_cases = [_]Tuple(&.{ []const u8, TokenKind, u32 }){
-        .{ "0x10 ", .hexLiteral, 0x10 },
-        .{ "0x10", .hexLiteral, 0x10 },
-        .{ "0", .decLiteral, 0 },
-        .{ "10", .decLiteral, 10 },
-        .{ "20000", .decLiteral, 20000 },
+    runTest("-- number literal --");
+    const Expected = .{ TokenKind, u32 };
+    const pass_cases = [_]TestCase(Expected){
+        .{ "0x10 ", .{ .hexLiteral, 0x10 } },
+        .{ "0x10", .{ .hexLiteral, 0x10 } },
+        .{ "0", .{ .decLiteral, 0 } },
+        .{ "10", .{ .decLiteral, 10 } },
+        .{ "20000", .{ .decLiteral, 20000 } },
     };
     for (pass_cases) |case| {
         defer _ch = ' ';
-        const str, const kind, const val = case;
+        const input, const expected = case;
+        const kind, const val = expected;
 
-        var stream = fbs(str);
+        var stream = fbs(input);
         const reader = stream.reader();
         const token = nextToken(reader);
 
-        //debugPrint("{s} {}", .{ str, token.kind });
         try std.testing.expect(token.kind == kind);
         try std.testing.expect(token.val() == val);
-        //debugPrint(":pass\n", .{});
     }
 }
 
 test "identifier" {
-    const pass_cases = [_]Tuple(&.{ []const u8, TokenKind }){
-        .{ "hoge", .label },
+    runTest("-- identifier --");
+
+    const Expected = .{TokenKind};
+    const pass_cases = [_]TestCase(Expected){
+        .{ "hoge", .{.label} },
         //.{ "hoge:", .labelDef },
     };
     for (pass_cases) |case| {
         defer _ch = ' ';
-        var stream = fbs(case[0]);
+        const input, const expected = case;
+        const kind = expected[0];
+        var stream = fbs(input);
         const reader = stream.reader();
         const token = nextToken(reader);
         defer tok_a.free(token.ident());
-        try std.testing.expect(token.kind == case[1]);
-        try std.testing.expectEqualStrings(case[0], token.ident());
+
+        try std.testing.expect(token.kind == kind);
+        try std.testing.expectEqualStrings(input, token.ident());
     }
     const label_cases = [_]Tuple(&.{ []const u8, TokenKind }){
         .{ "hoge:", .labelDef },
@@ -326,33 +348,38 @@ test "identifier" {
 }
 
 test "trailing identifier" {
-    const TestCase: type = Tuple(&[_]type{
-        []const u8,
-        []const []const u8,
-        []const TokenKind,
-    });
+    runTest("-- traling identifier --");
 
+    const Expected = .{
+        []const []const u8, // tokenized identifiers
+        []const TokenKind,
+    };
     // this fails: const pass_cases: []TestCase = .{ hogehoge };
-    const pass_cases = [_]TestCase{
-        .{ "trailing identifier ", &.{ "trailing", "identifier" }, &.{ .label, .label } },
-        .{ "trailing: identifier ", &.{ "trailing", "identifier" }, &.{ .labelDef, .label } },
+    const pass_cases = [_]TestCase(Expected){
+        .{ "trailing identifier ", .{ &.{ "trailing", "identifier" }, &.{ .label, .label } } },
+        .{ "trailing: identifier ", .{ &.{ "trailing", "identifier" }, &.{ .labelDef, .label } } },
     };
 
     for (pass_cases) |case| {
         defer _ch = ' ';
-        const test_string, const exptd_strs, const kinds = case;
-        var stream = fbs(test_string);
+        const input, const expected = case;
+        const strs, const kinds = expected;
+        var stream = fbs(input);
         const reader = stream.reader();
 
-        for (kinds, exptd_strs) |kind, exptd_str| {
+        for (kinds, strs) |kind, exptd_str| {
             const token = nextToken(reader);
-            defer tok_a.free(token.ident());
+            const ident = token.ident();
+            defer tok_a.free(ident);
+            dbgprint("{s} => {s}\n", .{ exptd_str, ident });
+            dbgprint("{any} => {any}\n", .{ exptd_str, ident });
             try std.testing.expect(token.kind == kind);
-            try std.testing.expectEqualStrings(exptd_str, token.ident());
+            try std.testing.expectEqualStrings(exptd_str, ident);
         }
     }
 }
 test "program" {
+    runTest("-- program --");
     const program_str =
         \\ld gr0, 4
         \\jmp aiueo
@@ -376,6 +403,7 @@ test "program" {
 }
 
 test "program2" {
+    runTest("-- program2 --");
     const program_str =
         \\ld gr0, 4
         \\jmp aiueo
@@ -398,6 +426,7 @@ test "program2" {
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const debugPrint = std.debug.print;
+const dbgprint = std.debug.print;
 const fbs = std.io.fixedBufferStream;
 const Tuple = std.meta.Tuple;
 const panic = std.debug.panic;
