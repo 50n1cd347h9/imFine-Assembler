@@ -271,6 +271,12 @@ test "token kind" {
     }
 }
 
+test "TokenKind accept all keywords" {
+    runTest("-- TokenKind accept all keywords --");
+    for (keywds) |keywd|
+        try std.testing.expect(TokenKind.get(keywd) != null);
+}
+
 test "number literal" {
     runTest("-- number literal --");
     const Expected = .{ TokenKind, u32 };
