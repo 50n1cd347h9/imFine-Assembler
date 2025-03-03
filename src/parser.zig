@@ -35,6 +35,8 @@ fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
     };
 }
 
+//fn kindToError()
+
 fn nextTokenVal(reader: anytype) ParseError!std.meta.Tuple(&[_]type{ Token, u32 }) {
     const actual = token.kind;
     const expected = .numberLiteral;
@@ -95,35 +97,37 @@ fn insPop(reader: anytype) ParseError!void {
 }
 
 fn insAdd(reader: anytype) ParseError!void {
-    // dst operand
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {},
         else => return ParseError.RegisterExpected,
     }
     token = nextToken(reader);
     token = nextTokenExpect(reader, .comma) catch |e| return e;
-    // src operand
     switch (token.kind) {
-        .gr0, .gr1, .sp, .fp, .flag, .ip => {
-            token = nextToken(reader);
-        },
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            token, const val = nextTokenVal(reader) catch |e| return e;
-            _ = val;
+            _ = token.val();
         },
         else => return ParseError.UnexpectedToken,
     }
+    token = nextToken(reader);
 }
 
 fn insAnd(reader: anytype) ParseError!void {
     switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {
-            token = nextToken(reader);
-            token = nextTokenExpect(reader, .comma) catch |e| return e;
-            token = nextTokenExpect(reader, .numberLiteral) catch |e| return e;
-        },
+        .gr0, .gr1, .sp, .fp => {},
         else => return error.RegisterExpected,
     }
+    token = nextToken(reader);
+    token = nextTokenExpect(reader, .comma) catch |e| return e;
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
+        .numberLiteral => {
+            _ = token.val();
+        },
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
 }
 
 fn macroRet(reader: anytype) ParseError!void {
@@ -246,7 +250,7 @@ test "number expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.NumberExpected, parse(reader));
+    try expectError(ParseError.UnexpectedToken, parse(reader));
 }
 
 test "register expected" {
