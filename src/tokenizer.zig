@@ -2,11 +2,12 @@ var token_buffer: [MAX_TOKEN_BUF]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&token_buffer);
 var tok_a = fba.allocator();
 
-const TokenKind = enum {
+pub const TokenKind = enum {
     label,
     labelDef,
-    decLiteral,
-    hexLiteral,
+    numberLiteral,
+    //decLiteral,
+    //hexLiteral,
     comma,
     ip,
     flag,
@@ -84,10 +85,7 @@ pub const Token = struct {
     },
 
     const Self = @This();
-
-    //pub fn set(tmp: anytype) void {
-    //    _ = tmp;
-    //}
+    // TODO: return null if cannot access _ident or _val
     pub fn ident(self: Self) []const u8 {
         return switch (self.u) {
             ._ident => self.u._ident,
@@ -159,13 +157,14 @@ pub fn nextToken(reader: anytype) Token {
 
     switch (CharKind.get(ch)) {
         .digit => {
-            kind = .decLiteral;
+            kind = .numberLiteral;
+            //kind = .decLiteral;
             if (ch == '0') {
                 i += 1;
                 ch = nextChar(reader);
 
                 if (ch == 'x') {
-                    kind = .hexLiteral;
+                    //kind = .hexLiteral;
                     i += 1;
                     ch = nextChar(reader);
                     while (isHex(ch)) {
@@ -222,7 +221,7 @@ pub fn nextToken(reader: anytype) Token {
             kind = .eof;
         },
         else => {
-            debugPrint("|{c}|{x}|\n", .{ ch, ch });
+            dbgprint("|{c}|{x}|\n", .{ ch, ch });
             @panic("character unaccepted");
         },
     }
@@ -230,8 +229,10 @@ pub fn nextToken(reader: anytype) Token {
     return .{
         .kind = kind,
         .u = switch (kind) {
-            .decLiteral, .hexLiteral => .{ ._val = num },
-            else => .{ ._ident = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
+            //.decLiteral, .hexLiteral => .{ ._val = num },
+            .numberLiteral => .{ ._val = num },
+            .label, .labelDef => .{ ._ident = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
+            else => .{ ._val = 0 },
         },
     };
 }
@@ -298,11 +299,11 @@ test "number literal" {
     runTest("-- number literal --");
     const Expected = .{ TokenKind, u32 };
     const pass_cases = [_]TestCase(Expected){
-        .{ "0x10 ", .{ .hexLiteral, 0x10 } },
-        .{ "0x10", .{ .hexLiteral, 0x10 } },
-        .{ "0", .{ .decLiteral, 0 } },
-        .{ "10", .{ .decLiteral, 10 } },
-        .{ "20000", .{ .decLiteral, 20000 } },
+        .{ "0x10 ", .{ .numberLiteral, 0x10 } },
+        .{ "0x10", .{ .numberLiteral, 0x10 } },
+        .{ "0", .{ .numberLiteral, 0 } },
+        .{ "10", .{ .numberLiteral, 10 } },
+        .{ "20000", .{ .numberLiteral, 20000 } },
     };
     for (pass_cases) |case| {
         defer testTokenizerInit();
@@ -394,8 +395,9 @@ test "program" {
     var token = nextToken(reader);
     while (token.kind != .eof) {
         switch (token.kind) {
-            .decLiteral, .hexLiteral => debugPrint("{d: <9} {}\n", .{ token.val(), token.kind }),
-            else => debugPrint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.val(), token.kind }),
+            .label, .labelDef => dbgprint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+            else => {},
         }
         token = nextToken(reader);
     }
@@ -416,8 +418,9 @@ test "program2" {
     var token = nextToken(reader);
     while (token.kind != .eof) {
         switch (token.kind) {
-            .decLiteral, .hexLiteral => debugPrint("{d: <9} {}\n", .{ token.val(), token.kind }),
-            else => debugPrint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.val(), token.kind }),
+            .label, .labelDef => dbgprint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+            else => {},
         }
         token = nextToken(reader);
     }
@@ -432,7 +435,7 @@ test "and instruction" {
     ;
     const Expected = []const TokenKind;
     const pass_cases = [_]TestCase(Expected){
-        .{ program_str, &.{ .and_, .gr0, .comma, .decLiteral, .newline, .eof } },
+        .{ program_str, &.{ .and_, .gr0, .comma, .numberLiteral, .newline, .eof } },
     };
 
     var stream = fbs(program_str);
@@ -454,7 +457,6 @@ const property = @import("property.zig");
 const consts = @import("consts.zig");
 const registers = consts.registers;
 const instructions = consts.instructions;
-const debugPrint = std.debug.print;
 const dbgprint = std.debug.print;
 const fbs = std.io.fixedBufferStream;
 const Tuple = std.meta.Tuple;

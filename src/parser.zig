@@ -1,5 +1,8 @@
 //! parser.zig is responsible for parsing assembly
 //! and making identifier table
+//!
+//! Every function don't call nextToken() before read token first time except program()
+//! Every function that read token call nextToken() at the end.
 
 var token: Token = undefined;
 
@@ -14,166 +17,186 @@ const ParseError = error{
     CloseBracketExpected,
     UnexpectedCloseBracket,
     CannotPopIntoImmediate,
+    UnexpectedToken,
 };
 
-fn readComma(_token: Token) ParseError!void {
-    if (_token.kind != .comma)
-        return error.CommaExpected;
-}
+/// return nextToken() if token kind actual == expected
+fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
+    const actual = token.kind;
+    if (actual == expected)
+        return nextToken(reader);
 
-fn readNumber(_token: Token) ParseError!u32 {
-    return switch (_token.kind) {
-        .decLiteral, .hexLiteral => _token.val(),
-        else => error.NumberExpected,
+    return switch (expected) {
+        .comma => ParseError.CommaExpected,
+        .numberLiteral => ParseError.NumberExpected,
+        .newline => ParseError.NewlineExpected,
+        .sqbrac_r => ParseError.CloseBracketExpected,
+        else => ParseError.UnexpectedToken,
     };
 }
 
-fn readNewline(_token: Token) ParseError!void {
-    return switch (_token.kind) {
-        .newline => {},
-        .eof => error.UnexpectedEof,
-        else => error.NewlineExpected,
-    };
+fn nextTokenVal(reader: anytype) ParseError!std.meta.Tuple(&[_]type{ Token, u32 }) {
+    const actual = token.kind;
+    const expected = .numberLiteral;
+    if (actual == expected)
+        return .{ nextToken(reader), token.val() };
+    return ParseError.NumberExpected;
 }
 
-fn readNlOrEof(_token: Token) ParseError!void {
-    return switch (_token.kind) {
-        .newline, .eof => {},
-        else => ParseError.TokenAfterInstruction,
-    };
+fn labelDef(reader: anytype) ParseError!void {
+    token = nextToken(reader);
+    token = nextTokenExpect(reader, .newline) catch |e| return e;
 }
-
-fn labelDef(_: anytype) void {}
 
 fn memoryReference(reader: anytype) ParseError!void {
-    return blk: switch (token.kind) {
+    switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
-            token = nextToken(reader);
-            if (token.kind != .sqbrac_r)
-                break :blk ParseError.CloseBracketExpected;
+            _ = 0; // do something
         },
-        .decLiteral, .hexLiteral => {
-            _ = readNumber(token) catch |e| break :blk e;
-            token = nextToken(reader);
-            if (token.kind != .sqbrac_r)
-                break :blk ParseError.CloseBracketExpected;
-        },
-        .sqbrac_r => ParseError.UnexpectedCloseBracket,
-        else => ParseError.RegisterExpected,
-    };
+        .numberLiteral => _ = token.val(),
+        .sqbrac_r => return ParseError.UnexpectedCloseBracket,
+        else => return ParseError.RegisterExpected,
+    }
+
+    token = nextToken(reader);
+    token = nextTokenExpect(reader, .sqbrac_r) catch |e| return e;
 }
 
 fn insPush(reader: anytype) ParseError!void {
-    return blk: switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {},
-        .decLiteral, .hexLiteral => {
-            _ = readNumber(token) catch |e| break :blk e;
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {
+            _ = 0; // do something
+        },
+        .numberLiteral => {
+            _ = token.val();
         },
         .sqbrac_l => {
             token = nextToken(reader);
-            memoryReference(reader) catch |e| break :blk e;
+            memoryReference(reader) catch |e| return e;
         },
-        else => ParseError.RegisterExpected,
-    };
+        else => return ParseError.RegisterExpected,
+    }
+    token = nextToken(reader);
 }
 
 fn insPop(reader: anytype) ParseError!void {
-    return blk: switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {},
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {
+            _ = 1; //do something
+        },
         .sqbrac_l => {
             token = nextToken(reader);
-            memoryReference(reader) catch |e| break :blk e;
+            memoryReference(reader) catch |e| return e;
         },
-        .decLiteral, .hexLiteral => ParseError.CannotPopIntoImmediate,
-        else => ParseError.RegisterExpected,
-    };
+        .numberLiteral => return ParseError.CannotPopIntoImmediate,
+        else => return ParseError.RegisterExpected,
+    }
+    token = nextToken(reader);
 }
 
 fn insAdd(reader: anytype) ParseError!void {
-    return blk: switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {
+    // dst operand
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {},
+        else => return ParseError.RegisterExpected,
+    }
+    token = nextToken(reader);
+    token = nextTokenExpect(reader, .comma) catch |e| return e;
+    // src operand
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {
             token = nextToken(reader);
-            readComma(token) catch |e| break :blk e;
-            token = nextToken(reader);
-            _ = readNumber(token) catch |e| break :blk e;
         },
-        else => ParseError.RegisterExpected,
-    };
+        .numberLiteral => {
+            token, const val = nextTokenVal(reader) catch |e| return e;
+            _ = val;
+        },
+        else => return ParseError.UnexpectedToken,
+    }
 }
 
 fn insAnd(reader: anytype) ParseError!void {
-    return blk: switch (token.kind) {
+    switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
             token = nextToken(reader);
-            readComma(token) catch |e| break :blk e;
-            token = nextToken(reader);
-            _ = readNumber(token) catch |e| break :blk e;
+            token = nextTokenExpect(reader, .comma) catch |e| return e;
+            token = nextTokenExpect(reader, .numberLiteral) catch |e| return e;
         },
-        else => error.RegisterExpected,
-    };
+        else => return error.RegisterExpected,
+    }
+}
+
+fn macroRet(reader: anytype) ParseError!void {
+    _ = reader;
+}
+
+fn macroCall(reader: anytype) ParseError!void {
+    _ = reader;
+}
+
+fn macroMov(reader: anytype) ParseError!void {
+    _ = reader;
 }
 
 // TODO: handle macro e.g. call, ret, mov
 fn instruction(reader: anytype) ParseError!void {
-    return blk: switch (token.kind) {
+    switch (token.kind) {
         .push => {
             token = nextToken(reader);
-            insPush(reader) catch |e| break :blk e;
+            insPush(reader) catch |e| return e;
         },
         .pop => {
             token = nextToken(reader);
-            insPop(reader) catch |e| break :blk e;
+            insPop(reader) catch |e| return e;
         },
         .add => {
             token = nextToken(reader);
-            insAdd(reader) catch |e| break :blk e;
+            insAdd(reader) catch |e| return e;
         },
         .sub => {},
         .mul => {},
         .div => {},
         .and_ => {
             token = nextToken(reader);
-            insAnd(reader) catch |e| break :blk e;
+            insAnd(reader) catch |e| return e;
         },
         .or_ => {},
         .xor => {},
         .shl => {},
-        //.ld => {},
         .cmp => {},
         .jmp => {},
         .jg => {},
         .jz => {},
         .jl => {},
-        .call => {},
+        .call => {
+            token = nextToken(reader);
+            macroCall(reader) catch |e| return e;
+        },
         .ret => {},
         .nop => {},
-        else => error.InstructionExpected,
-    };
+        else => return error.InstructionExpected,
+    }
+
+    switch (token.kind) {
+        .newline, .eof => token = nextToken(reader),
+        else => return ParseError.UnexpectedToken,
+    }
 }
 
 fn program(reader: anytype) ParseError!void {
-    token = nextToken(reader);
-
-    while (token.kind == .newline)
-        token = nextToken(reader);
-
-    return blk: while (true) {
+    return while (true) {
         switch (token.kind) {
-            .newline => {},
-            .labelDef => {
-                labelDef(reader);
-                token = nextToken(reader);
-                readNewline(token) catch |e| break :blk e;
-            },
+            .newline => token = nextToken(reader),
+            .labelDef => labelDef(reader) catch |e| break e,
             .eof => break,
-            else => {
-                instruction(reader) catch |e| break :blk e;
-                token = nextToken(reader);
-                readNlOrEof(token) catch |e| break :blk e;
-            },
+            else => instruction(reader) catch |e| break e,
         }
-        token = nextToken(reader);
     };
+}
+
+fn parse(reader: anytype) ParseError!void {
+    token = nextToken(reader);
+    return program(reader);
 }
 
 test "and instruction" {
@@ -186,7 +209,7 @@ test "and instruction" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try program(reader);
+    try parse(reader);
 }
 
 test "newline expected" {
@@ -198,7 +221,7 @@ test "newline expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.NewlineExpected, program(reader));
+    try expectError(ParseError.NewlineExpected, parse(reader));
 }
 
 test "unexpected eof" {
@@ -210,7 +233,7 @@ test "unexpected eof" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.UnexpectedEof, program(reader));
+    try expectError(ParseError.NewlineExpected, parse(reader));
 }
 
 test "number expected" {
@@ -223,7 +246,7 @@ test "number expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.NumberExpected, program(reader));
+    try expectError(ParseError.NumberExpected, parse(reader));
 }
 
 test "register expected" {
@@ -236,7 +259,7 @@ test "register expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.RegisterExpected, program(reader));
+    try expectError(ParseError.RegisterExpected, parse(reader));
 }
 
 test "comma expected" {
@@ -249,7 +272,7 @@ test "comma expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.CommaExpected, program(reader));
+    try expectError(ParseError.CommaExpected, parse(reader));
 }
 
 test "instruction expected" {
@@ -262,7 +285,7 @@ test "instruction expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.InstructionExpected, program(reader));
+    try expectError(ParseError.InstructionExpected, parse(reader));
 }
 
 test "memory ref " {
@@ -275,7 +298,7 @@ test "memory ref " {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try program(reader);
+    try parse(reader);
 }
 
 test "memory ref imm " {
@@ -288,7 +311,7 @@ test "memory ref imm " {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try program(reader);
+    try parse(reader);
 }
 
 test "close expected" {
@@ -301,7 +324,7 @@ test "close expected" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.CloseBracketExpected, program(reader));
+    try expectError(ParseError.CloseBracketExpected, parse(reader));
 }
 
 test "unexpected close " {
@@ -314,7 +337,7 @@ test "unexpected close " {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.UnexpectedCloseBracket, program(reader));
+    try expectError(ParseError.UnexpectedCloseBracket, parse(reader));
 }
 test "and instruction fail" {
     runTest("-- and instruction fail --");
@@ -326,13 +349,14 @@ test "and instruction fail" {
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
-    try expectError(ParseError.TokenAfterInstruction, program(reader));
+    try expectError(ParseError.UnexpectedToken, parse(reader));
 }
 
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
 const property = @import("property.zig");
 const Token = tokenizer.Token;
+const TokenKind = tokenizer.TokenKind;
 const testTokenizerInit = tokenizer.testTokenizerInit;
 const runTest = property.runTest;
 const nextToken = tokenizer.nextToken;
