@@ -2,6 +2,14 @@ var token_buffer: [MAX_TOKEN_BUF]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&token_buffer);
 var tok_a = fba.allocator();
 
+const Register = enum {
+    ip,
+    flag,
+    sp,
+    fp,
+    gr0,
+    gr1,
+};
 pub const TokenKind = enum {
     label,
     labelDef,
@@ -79,24 +87,15 @@ const CharKind = enum {
 
 pub const Token = struct {
     kind: TokenKind,
-    u: union(enum) {
-        _val: u32,
-        _ident: []u8,
-    },
+    id: ?HashType, // nullable
 
+    const hash_fn = std.hash.RapidHash.hash;
+    const HashType: type = @typeInfo(@TypeOf(hash_fn)).@"fn".return_type.?;
     const Self = @This();
-    // TODO: return null if cannot access _ident or _val
-    pub fn ident(self: Self) []const u8 {
-        return switch (self.u) {
-            ._ident => self.u._ident,
-            else => @panic("access violation: .u._buf not initialized"),
-        };
-    }
-    pub fn val(self: Self) u32 {
-        return switch (self.u) {
-            ._val => self.u._val,
-            else => @panic("access violation: .u._num not initialized"),
-        };
+
+    pub fn hash(input: []const u8) HashType {
+        const hash_key = 0xdeadbeef;
+        return hash_fn(hash_key, input);
     }
 };
 
@@ -228,11 +227,10 @@ pub fn nextToken(reader: anytype) Token {
 
     return .{
         .kind = kind,
-        .u = switch (kind) {
-            //.decLiteral, .hexLiteral => .{ ._val = num },
-            .numberLiteral => .{ ._val = num },
-            .label, .labelDef => .{ ._ident = tok_a.dupe(u8, buf[0..i]) catch @panic("out of memory: fixed buffer allocator") },
-            else => .{ ._val = 0 },
+        .id = switch (kind) {
+            .numberLiteral => num,
+            .label, .labelDef => Token.hash(buf[0..i]),
+            else => null,
         },
     };
 }
@@ -315,7 +313,7 @@ test "number literal" {
         const token = nextToken(reader);
 
         try std.testing.expect(token.kind == kind);
-        try std.testing.expect(token.val() == val);
+        try std.testing.expect(token.id == val);
     }
 }
 
@@ -338,10 +336,11 @@ test "identifier" {
         var stream = fbs(input);
         const reader = stream.reader();
         const token = nextToken(reader);
-        defer tok_a.free(token.ident());
+        //defer tok_a.free(token.ident());
 
         try std.testing.expect(token.kind == kind);
-        try std.testing.expectEqualStrings(exptd_str, token.ident());
+        //try std.testing.expectEqualStrings(Token.hash(exptd_str), token.id);
+        try std.testing.expect(Token.hash(exptd_str) == token.id);
     }
 }
 
@@ -367,12 +366,8 @@ test "trailing identifier" {
 
         for (kinds, strs) |kind, exptd_str| {
             const token = nextToken(reader);
-            const ident = token.ident();
-            defer tok_a.free(ident);
-            //dbgprint("{s} => {s}\n", .{ exptd_str, ident });
-            //dbgprint("{any} => {any}\n", .{ exptd_str, ident });
             try std.testing.expect(token.kind == kind);
-            try std.testing.expectEqualStrings(exptd_str, ident);
+            try std.testing.expect(Token.hash(exptd_str) == token.id.?);
         }
     }
 }
@@ -395,8 +390,8 @@ test "program" {
     var token = nextToken(reader);
     while (token.kind != .eof) {
         switch (token.kind) {
-            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.val(), token.kind }),
-            .label, .labelDef => dbgprint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
             else => {},
         }
         token = nextToken(reader);
@@ -418,8 +413,8 @@ test "program2" {
     var token = nextToken(reader);
     while (token.kind != .eof) {
         switch (token.kind) {
-            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.val(), token.kind }),
-            .label, .labelDef => dbgprint("{s: <9} {}\n", .{ token.ident(), token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
             else => {},
         }
         token = nextToken(reader);
