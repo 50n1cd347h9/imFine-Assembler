@@ -1,7 +1,3 @@
-var token_buffer: [MAX_TOKEN_BUF]u8 = undefined;
-var fba = std.heap.FixedBufferAllocator.init(&token_buffer);
-var tok_a = fba.allocator();
-
 const Register = enum {
     ip,
     flag,
@@ -336,10 +332,8 @@ test "identifier" {
         var stream = fbs(input);
         const reader = stream.reader();
         const token = nextToken(reader);
-        //defer tok_a.free(token.ident());
 
         try std.testing.expect(token.kind == kind);
-        //try std.testing.expectEqualStrings(Token.hash(exptd_str), token.id);
         try std.testing.expect(Token.hash(exptd_str) == token.id);
     }
 }
