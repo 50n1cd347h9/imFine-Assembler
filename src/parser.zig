@@ -47,7 +47,7 @@ fn nextTokenVal(reader: anytype) ParseError!std.meta.Tuple(&[_]type{ Token, u32 
 
 fn labelDef(reader: anytype) ParseError!void {
     token = nextToken(reader);
-    token = nextTokenExpect(reader, .newline) catch |e| return e;
+    token = try nextTokenExpect(reader, .newline);
 }
 
 fn memoryReference(reader: anytype) ParseError!void {
@@ -61,7 +61,7 @@ fn memoryReference(reader: anytype) ParseError!void {
     }
 
     token = nextToken(reader);
-    token = nextTokenExpect(reader, .sqbrac_r) catch |e| return e;
+    token = try nextTokenExpect(reader, .sqbrac_r);
 }
 
 fn insPush(reader: anytype) ParseError!void {
@@ -74,7 +74,7 @@ fn insPush(reader: anytype) ParseError!void {
         },
         .sqbrac_l => {
             token = nextToken(reader);
-            memoryReference(reader) catch |e| return e;
+            try memoryReference(reader);
         },
         else => return ParseError.RegisterExpected,
     }
@@ -88,7 +88,7 @@ fn insPop(reader: anytype) ParseError!void {
         },
         .sqbrac_l => {
             token = nextToken(reader);
-            memoryReference(reader) catch |e| return e;
+            try memoryReference(reader);
         },
         .numberLiteral => return ParseError.CannotPopIntoImmediate,
         else => return ParseError.RegisterExpected,
@@ -102,7 +102,7 @@ fn insAdd(reader: anytype) ParseError!void {
         else => return ParseError.RegisterExpected,
     }
     token = nextToken(reader);
-    token = nextTokenExpect(reader, .comma) catch |e| return e;
+    token = try nextTokenExpect(reader, .comma);
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
@@ -113,13 +113,50 @@ fn insAdd(reader: anytype) ParseError!void {
     token = nextToken(reader);
 }
 
-fn insAnd(reader: anytype) ParseError!void {
+fn insDiv(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {},
+        else => return ParseError.RegisterExpected,
+    }
+    token = nextToken(reader);
+    token = try nextTokenExpect(reader, .comma);
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
+        .numberLiteral => {
+            _ = token.val();
+        },
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
+}
+
+fn insCmp(reader: anytype) ParseError!void {
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
+        .numberLiteral => {
+            _ = token.val();
+        },
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
+    token = try nextTokenExpect(reader, .comma);
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
+        .numberLiteral => {
+            _ = token.val();
+        },
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
+}
+
+fn insJmp(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {},
         else => return error.RegisterExpected,
     }
     token = nextToken(reader);
-    token = nextTokenExpect(reader, .comma) catch |e| return e;
+    token = try nextTokenExpect(reader, .comma);
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
@@ -131,15 +168,44 @@ fn insAnd(reader: anytype) ParseError!void {
 }
 
 fn macroRet(reader: anytype) ParseError!void {
-    _ = reader;
+    token = nextToken(reader);
 }
 
 fn macroCall(reader: anytype) ParseError!void {
-    _ = reader;
+    switch (token.kind) {
+        .gr0, .gr1 => {},
+        //.numberLiteral => {
+        //    _ = token.val();
+        //},
+        .label => {},
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
 }
 
 fn macroMov(reader: anytype) ParseError!void {
-    _ = reader;
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp => {},
+        .sqbrac_l => {
+            token = nextToken(reader);
+            try memoryReference(reader);
+        },
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
+    token = try nextTokenExpect(reader, .comma);
+    switch (token.kind) {
+        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
+        .numberLiteral => {
+            _ = token.val();
+        },
+        .sqbrac_l => {
+            token = nextToken(reader);
+            try memoryReference(reader);
+        },
+        else => return ParseError.UnexpectedToken,
+    }
+    token = nextToken(reader);
 }
 
 // TODO: handle macro e.g. call, ret, mov
@@ -147,37 +213,41 @@ fn instruction(reader: anytype) ParseError!void {
     switch (token.kind) {
         .push => {
             token = nextToken(reader);
-            insPush(reader) catch |e| return e;
+            try insPush(reader);
         },
         .pop => {
             token = nextToken(reader);
-            insPop(reader) catch |e| return e;
+            try insPop(reader);
         },
-        .add => {
+        .add, .sub, .mul, .and_, .or_, .xor, .shl => {
             token = nextToken(reader);
-            insAdd(reader) catch |e| return e;
+            try insAdd(reader);
         },
-        .sub => {},
-        .mul => {},
-        .div => {},
-        .and_ => {
+        .div => {
             token = nextToken(reader);
-            insAnd(reader) catch |e| return e;
+            try insDiv(reader);
         },
-        .or_ => {},
-        .xor => {},
-        .shl => {},
-        .cmp => {},
-        .jmp => {},
-        .jg => {},
-        .jz => {},
-        .jl => {},
-        .call => {
+        .cmp => {
             token = nextToken(reader);
-            macroCall(reader) catch |e| return e;
+            try insCmp(reader);
         },
-        .ret => {},
-        .nop => {},
+        .jmp, .jg, .jz, .jl => {
+            token = nextToken(reader);
+            try insJmp(reader);
+        },
+        //.call => {
+        //    token = nextToken(reader);
+        //    macroCall(reader) catch |e| return e;
+        //},
+        //.ret => {
+        //    token = nextToken(reader);
+        //    macroRet(reader) catch |e| return e;
+        //},
+        // .mov => {
+        //    token = nextToken(reader);
+        //    macroMov(reader) catch |e| return e;
+        // },
+        //.nop => {},
         else => return error.InstructionExpected,
     }
 
@@ -191,9 +261,9 @@ fn program(reader: anytype) ParseError!void {
     return while (true) {
         switch (token.kind) {
             .newline => token = nextToken(reader),
-            .labelDef => labelDef(reader) catch |e| break e,
+            .labelDef => try labelDef(reader),
             .eof => break,
-            else => instruction(reader) catch |e| break e,
+            else => try instruction(reader),
         }
     };
 }
