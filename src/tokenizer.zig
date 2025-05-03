@@ -37,6 +37,7 @@ pub const TokenKind = enum {
     jl,
     call,
     ret,
+    mov,
     nop,
     newline,
     eof,
@@ -456,3 +457,4 @@ const MAX_IDENT_LEN = consts.MAX_IDENT_LEN;
 const MAX_TOKEN_BUF = consts.MAX_TOKEN_BUF;
 const EOF = consts.EOF;
 const keywds = consts.keywds;
+//const

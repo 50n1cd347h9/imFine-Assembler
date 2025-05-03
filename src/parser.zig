@@ -37,13 +37,13 @@ fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
 
 //fn kindToError()
 
-fn nextTokenVal(reader: anytype) ParseError!std.meta.Tuple(&[_]type{ Token, u32 }) {
-    const actual = token.kind;
-    const expected = .numberLiteral;
-    if (actual == expected)
-        return .{ nextToken(reader), token.val() };
-    return ParseError.NumberExpected;
-}
+//fn nextTokenVal(reader: anytype) ParseError!std.meta.Tuple(&[_]type{ Token, u32 }) {
+//    const actual = token.kind;
+//    const expected = .numberLiteral;
+//    if (actual == expected)
+//        return .{ nextToken(reader), token.id };
+//    return ParseError.NumberExpected;
+//}
 
 fn labelDef(reader: anytype) ParseError!void {
     token = nextToken(reader);
@@ -55,7 +55,7 @@ fn memoryReference(reader: anytype) ParseError!void {
         .gr0, .gr1, .sp, .fp => {
             _ = 0; // do something
         },
-        .numberLiteral => _ = token.val(),
+        .numberLiteral => _ = token.id,
         .sqbrac_r => return ParseError.UnexpectedCloseBracket,
         else => return ParseError.RegisterExpected,
     }
@@ -70,7 +70,7 @@ fn insPush(reader: anytype) ParseError!void {
             _ = 0; // do something
         },
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         .sqbrac_l => {
             token = nextToken(reader);
@@ -106,7 +106,7 @@ fn insAdd(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         else => return ParseError.UnexpectedToken,
     }
@@ -123,7 +123,7 @@ fn insDiv(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         else => return ParseError.UnexpectedToken,
     }
@@ -134,7 +134,7 @@ fn insCmp(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         else => return ParseError.UnexpectedToken,
     }
@@ -143,7 +143,7 @@ fn insCmp(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         else => return ParseError.UnexpectedToken,
     }
@@ -160,7 +160,7 @@ fn insJmp(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         else => return ParseError.UnexpectedToken,
     }
@@ -197,7 +197,7 @@ fn macroMov(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp, .flag, .ip => {},
         .numberLiteral => {
-            _ = token.val();
+            _ = token.id;
         },
         .sqbrac_l => {
             token = nextToken(reader);
@@ -235,18 +235,18 @@ fn instruction(reader: anytype) ParseError!void {
             token = nextToken(reader);
             try insJmp(reader);
         },
-        //.call => {
-        //    token = nextToken(reader);
-        //    macroCall(reader) catch |e| return e;
-        //},
-        //.ret => {
-        //    token = nextToken(reader);
-        //    macroRet(reader) catch |e| return e;
-        //},
-        // .mov => {
-        //    token = nextToken(reader);
-        //    macroMov(reader) catch |e| return e;
-        // },
+        .call => {
+            token = nextToken(reader);
+            try macroCall(reader);
+        },
+        .ret => {
+            token = nextToken(reader);
+            try macroRet(reader);
+        },
+        .mov => {
+            token = nextToken(reader);
+            try macroMov(reader);
+        },
         //.nop => {},
         else => return error.InstructionExpected,
     }
@@ -428,6 +428,7 @@ test "and instruction fail" {
 
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
+const generator = @import("generator.zig");
 const property = @import("property.zig");
 const Token = tokenizer.Token;
 const TokenKind = tokenizer.TokenKind;
