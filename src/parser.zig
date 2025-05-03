@@ -269,6 +269,7 @@ fn program(reader: anytype) ParseError!void {
 }
 
 fn parse(reader: anytype) ParseError!void {
+    //const tokenizer = tokenizer.init();
     token = nextToken(reader);
     return program(reader);
 }
@@ -401,6 +402,10 @@ test "and instruction fail" {
     var stream = fbs(program_str);
     const reader = stream.reader();
     try expectError(ParseError.UnexpectedToken, parse(reader));
+
+    std.debug.print("len: {d}\n", .{tokenizer.tokens.len});
+    std.debug.print("len: {any}\n", .{tokenizer.tokens.get(0)});
+    std.debug.print("len: {any}\n", .{tokenizer.tokens.get(3)});
 }
 
 const std = @import("std");

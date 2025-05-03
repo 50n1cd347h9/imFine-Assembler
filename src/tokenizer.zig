@@ -1,11 +1,17 @@
-const Register = enum {
-    ip,
-    flag,
-    sp,
-    fp,
-    gr0,
-    gr1,
-};
+pub var tokens: Tokens = Tokens{};
+
+var buffer: [0x1000]u8 = undefined;
+var fba = std.heap.FixedBufferAllocator.init(&buffer);
+const a = fba.allocator();
+
+pub fn init() !void {
+    tokens.setCapacity(MAX_TOKENS);
+}
+
+pub fn deinit() void {
+    tokens.deinit(a);
+}
+
 pub const TokenKind = enum {
     label,
     labelDef,
@@ -44,12 +50,11 @@ pub const TokenKind = enum {
     sqbrac_l,
     sqbrac_r,
 
-    const Self = @This();
-    pub fn get(buf: []const u8) ?Self {
-        return std.meta.stringToEnum(Self, buf) orelse blk: {
+    pub fn get(buf: []const u8) ?TokenKind {
+        return std.meta.stringToEnum(TokenKind, buf) orelse blk: {
             var tmp = [_]u8{'_'} ** MAX_IDENT_LEN;
             std.mem.copyForwards(u8, &tmp, buf);
-            break :blk std.meta.stringToEnum(Self, tmp[0 .. buf.len + 1]);
+            break :blk std.meta.stringToEnum(TokenKind, tmp[0 .. buf.len + 1]);
         };
     }
 };
@@ -66,8 +71,7 @@ const CharKind = enum {
     sqbrac_r,
 
     // TODO: define comment(#)
-    const Self = @This();
-    pub fn get(ch: u8) Self {
+    pub fn get(ch: u8) CharKind {
         return switch (ch) {
             'a'...'z', 'A'...'Z' => .letter,
             '0'...'9' => .digit,
@@ -88,13 +92,14 @@ pub const Token = struct {
 
     const hash_fn = std.hash.RapidHash.hash;
     const HashType: type = @typeInfo(@TypeOf(hash_fn)).@"fn".return_type.?;
-    const Self = @This();
 
     pub fn hash(input: []const u8) HashType {
         const hash_key = 0xdeadbeef;
         return hash_fn(hash_key, input);
     }
 };
+
+const Tokens: type = std.MultiArrayList(Token);
 
 fn isRegister(token: []const u8) bool {
     for (registers) |register|
@@ -112,8 +117,8 @@ fn isKeyword(token: []const u8) bool {
     return isRegister(token) or isInstruction(token);
 }
 
-fn streql(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, a, b);
+fn streql(one: []const u8, two: []const u8) bool {
+    return std.mem.eql(u8, one, two);
 }
 
 fn isDigit(ch: u8) bool {
@@ -222,7 +227,7 @@ pub fn nextToken(reader: anytype) Token {
         },
     }
 
-    return .{
+    const token = Token{
         .kind = kind,
         .id = switch (kind) {
             .numberLiteral => num,
@@ -230,6 +235,9 @@ pub fn nextToken(reader: anytype) Token {
             else => null,
         },
     };
+
+    tokens.append(a, token) catch @panic("aaaaaa");
+    return token;
 }
 
 test "digit" {
@@ -427,6 +435,7 @@ test "and instruction" {
 const std = @import("std");
 const property = @import("property.zig");
 const consts = @import("consts.zig");
+const parser = @import("parser.zig");
 const registers = consts.registers;
 const instructions = consts.instructions;
 const dbgprint = std.debug.print;
@@ -437,6 +446,6 @@ const TestCase = property.TestCase;
 const runTest = property.runTest;
 const MAX_IDENT_LEN = consts.MAX_IDENT_LEN;
 const MAX_TOKEN_BUF = consts.MAX_TOKEN_BUF;
+const MAX_TOKENS = consts.MAX_TOKENS;
 const EOF = consts.EOF;
 const keywds = consts.keywds;
-//const
