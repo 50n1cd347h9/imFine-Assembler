@@ -233,8 +233,6 @@ pub fn nextToken(reader: anytype) Token {
 }
 
 test "digit" {
-    runTest("-- digit --");
-
     for (0..10) |i|
         try std.testing.expect(isDigit(@intCast('0' + i)));
     for ([_]u8{ ':', '/', '`', 'g' }) |ch|
@@ -242,8 +240,6 @@ test "digit" {
 }
 
 test "hex" {
-    runTest("-- hex --");
-
     for (0..10) |i|
         try std.testing.expect(isHex(@intCast('0' + i)));
     for (0..6) |i|
@@ -253,8 +249,6 @@ test "hex" {
 }
 
 test "letter" {
-    runTest("-- letter --");
-
     for ('A'..'Z' + 1) |letter|
         try std.testing.expect(isLetter(@intCast(letter)));
     for ('a'..'z' + 1) |letter|
@@ -264,8 +258,6 @@ test "letter" {
 }
 
 test "token kind" {
-    runTest("-- token kind --");
-
     const pass_cases = [_]TestCase(TokenKind){
         .{ "and", .and_ },
         .{ "or", .or_ },
@@ -285,13 +277,11 @@ test "token kind" {
 }
 
 test "TokenKind accept all keywords" {
-    runTest("-- TokenKind accept all keywords --");
     for (keywds) |keywd|
         try std.testing.expect(TokenKind.get(keywd) != null);
 }
 
 test "number literal" {
-    runTest("-- number literal --");
     const Expected = .{ TokenKind, u32 };
     const pass_cases = [_]TestCase(Expected){
         .{ "0x10 ", .{ .numberLiteral, 0x10 } },
@@ -315,8 +305,6 @@ test "number literal" {
 }
 
 test "identifier" {
-    runTest("-- identifier --");
-
     const Expected = .{ []const u8, TokenKind };
     const pass_cases = [_]TestCase(Expected){
         .{ "hoge", .{ "hoge", .label } },
@@ -340,8 +328,6 @@ test "identifier" {
 }
 
 test "trailing identifier" {
-    runTest("-- traling identifier --");
-
     const Expected = .{
         []const []const u8, // tokenized identifiers
         []const TokenKind,
@@ -368,7 +354,6 @@ test "trailing identifier" {
 }
 
 test "program" {
-    runTest("-- program --");
     defer testTokenizerInit();
     const program_str =
         \\ld gr0, 4
@@ -394,7 +379,6 @@ test "program" {
 }
 
 test "program2" {
-    runTest("-- program2 --");
     defer testTokenizerInit();
     const program_str =
         \\ld gr0, 4
@@ -417,8 +401,6 @@ test "program2" {
 }
 
 test "and instruction" {
-    runTest("-- program --");
-
     const program_str =
         \\and gr0, 1 
         \\
