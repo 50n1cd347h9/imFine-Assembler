@@ -274,9 +274,7 @@ fn parse(reader: anytype) ParseError!void {
 }
 
 test "and instruction" {
-    runTest("-- program --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\and gr0, 1 
         \\
@@ -287,9 +285,7 @@ test "and instruction" {
 }
 
 test "newline expected" {
-    runTest("-- newline expected --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\hoge:ahi
     ;
@@ -299,9 +295,7 @@ test "newline expected" {
 }
 
 test "unexpected eof" {
-    runTest("-- unexpected eof --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\hoge:
     ;
@@ -311,9 +305,7 @@ test "unexpected eof" {
 }
 
 test "number expected" {
-    runTest("-- number expected --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\and gr0, x
         \\
@@ -324,9 +316,7 @@ test "number expected" {
 }
 
 test "register expected" {
-    runTest("-- register expected --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\and XX, 1
         \\
@@ -337,9 +327,7 @@ test "register expected" {
 }
 
 test "comma expected" {
-    runTest("-- comma expected --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\and gr0 1
         \\
@@ -350,9 +338,7 @@ test "comma expected" {
 }
 
 test "instruction expected" {
-    runTest("-- instruction expected --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\gr0 1
         \\
@@ -363,9 +349,7 @@ test "instruction expected" {
 }
 
 test "memory ref " {
-    runTest("-- memory ref --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\push [gr0]
         \\
@@ -376,9 +360,7 @@ test "memory ref " {
 }
 
 test "memory ref imm " {
-    runTest("-- memory ref imm --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\push [100]
         \\
@@ -389,9 +371,7 @@ test "memory ref imm " {
 }
 
 test "close expected" {
-    runTest("-- close expected --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\push [gr0
         \\
@@ -402,9 +382,7 @@ test "close expected" {
 }
 
 test "unexpected close " {
-    runTest("-- unexpected close --");
-
-    defer testTokenizerInit();
+    testTokenizerInit();
     const program_str =
         \\push []
         \\
@@ -413,10 +391,9 @@ test "unexpected close " {
     const reader = stream.reader();
     try expectError(ParseError.UnexpectedCloseBracket, parse(reader));
 }
-test "and instruction fail" {
-    runTest("-- and instruction fail --");
 
-    defer testTokenizerInit();
+test "and instruction fail" {
+    testTokenizerInit();
     const program_str =
         \\and gr0, 1  ddd
         \\
