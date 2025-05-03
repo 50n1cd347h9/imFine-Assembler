@@ -1,15 +1,23 @@
 pub var tokens: Tokens = Tokens{};
-
+var _ch: u8 = ' ';
 var buffer: [0x1000]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&buffer);
 const a = fba.allocator();
 
-pub fn init() !void {
-    tokens.setCapacity(MAX_TOKENS);
+pub fn init() void {
+    _ch = ' ';
+    tokens.clearAndFree(a);
+    //tokens.setCapacity(MAX_TOKENS);
 }
 
 pub fn deinit() void {
-    tokens.deinit(a);
+    _ch = ' ';
+    tokens.clearAndFree(a);
+    //tokens.deinit(a);
+}
+
+pub fn testTokenizerInit() void {
+    _ch = ' ';
 }
 
 pub const TokenKind = enum {
@@ -140,11 +148,6 @@ fn nextChar(reader: anytype) u8 {
     return reader.readByte() catch EOF;
 }
 
-pub fn testTokenizerInit() void {
-    _ch = ' ';
-}
-
-var _ch: u8 = ' ';
 pub fn nextToken(reader: anytype) Token {
     var kind: TokenKind = undefined;
     var num: u32 = 0;

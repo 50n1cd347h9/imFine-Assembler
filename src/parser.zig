@@ -209,6 +209,7 @@ fn macroMov(reader: anytype) ParseError!void {
 }
 
 // TODO: handle macro e.g. call, ret, mov
+// TODO: backpatch
 fn instruction(reader: anytype) ParseError!void {
     switch (token.kind) {
         .push => {
@@ -269,13 +270,14 @@ fn program(reader: anytype) ParseError!void {
 }
 
 fn parse(reader: anytype) ParseError!void {
-    //const tokenizer = tokenizer.init();
+    tokenizer.init(); // clear 'tokens' and '_ch'
     token = nextToken(reader);
-    return program(reader);
+    try program(reader);
+    //std.debug.print("len: {d}\n", .{tokenizer.tokens.len});
+    //std.debug.print("len: {any}\n", .{tokenizer.tokens.get(1)});
 }
 
 test "and instruction" {
-    testTokenizerInit();
     const program_str =
         \\and gr0, 1 
         \\
@@ -286,7 +288,6 @@ test "and instruction" {
 }
 
 test "newline expected" {
-    testTokenizerInit();
     const program_str =
         \\hoge:ahi
     ;
@@ -296,7 +297,6 @@ test "newline expected" {
 }
 
 test "unexpected eof" {
-    testTokenizerInit();
     const program_str =
         \\hoge:
     ;
@@ -306,7 +306,6 @@ test "unexpected eof" {
 }
 
 test "number expected" {
-    testTokenizerInit();
     const program_str =
         \\and gr0, x
         \\
@@ -317,7 +316,6 @@ test "number expected" {
 }
 
 test "register expected" {
-    testTokenizerInit();
     const program_str =
         \\and XX, 1
         \\
@@ -328,7 +326,6 @@ test "register expected" {
 }
 
 test "comma expected" {
-    testTokenizerInit();
     const program_str =
         \\and gr0 1
         \\
@@ -339,7 +336,6 @@ test "comma expected" {
 }
 
 test "instruction expected" {
-    testTokenizerInit();
     const program_str =
         \\gr0 1
         \\
@@ -350,7 +346,6 @@ test "instruction expected" {
 }
 
 test "memory ref " {
-    testTokenizerInit();
     const program_str =
         \\push [gr0]
         \\
@@ -361,7 +356,6 @@ test "memory ref " {
 }
 
 test "memory ref imm " {
-    testTokenizerInit();
     const program_str =
         \\push [100]
         \\
@@ -372,7 +366,6 @@ test "memory ref imm " {
 }
 
 test "close expected" {
-    testTokenizerInit();
     const program_str =
         \\push [gr0
         \\
@@ -383,7 +376,6 @@ test "close expected" {
 }
 
 test "unexpected close " {
-    testTokenizerInit();
     const program_str =
         \\push []
         \\
@@ -394,7 +386,6 @@ test "unexpected close " {
 }
 
 test "and instruction fail" {
-    testTokenizerInit();
     const program_str =
         \\and gr0, 1  ddd
         \\
@@ -402,10 +393,6 @@ test "and instruction fail" {
     var stream = fbs(program_str);
     const reader = stream.reader();
     try expectError(ParseError.UnexpectedToken, parse(reader));
-
-    std.debug.print("len: {d}\n", .{tokenizer.tokens.len});
-    std.debug.print("len: {any}\n", .{tokenizer.tokens.get(0)});
-    std.debug.print("len: {any}\n", .{tokenizer.tokens.get(3)});
 }
 
 const std = @import("std");
@@ -414,8 +401,6 @@ const generator = @import("generator.zig");
 const property = @import("property.zig");
 const Token = tokenizer.Token;
 const TokenKind = tokenizer.TokenKind;
-const testTokenizerInit = tokenizer.testTokenizerInit;
-const runTest = property.runTest;
 const nextToken = tokenizer.nextToken;
 const fbs = std.io.fixedBufferStream;
 const dbgprint = std.debug.print;
