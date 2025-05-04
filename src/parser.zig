@@ -24,6 +24,8 @@ const ParseError = error{
     UnexpectedCloseBracket,
     CannotPopIntoImmediate,
     UnexpectedToken,
+    LabelDefExpected,
+    LabelDefinedAlready,
 };
 
 pub const Label = struct {
@@ -47,19 +49,42 @@ fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
     };
 }
 
-//fn kindToError()
-
-//fn nextTokenVal(reader: anytype) ParseError!std.meta.Tuple(&[_]type{ Token, u32 }) {
-//    const actual = token.kind;
-//    const expected = .numberLiteral;
-//    if (actual == expected)
-//        return .{ nextToken(reader), token.id };
-//    return ParseError.NumberExpected;
+//fn loolupLabels(_token: Token) ?Token {
+//    _ = _token;
 //}
 
+fn labelDefExists() ParseError!bool {
+    const current = token;
+
+    if (current.kind != .labelDef)
+        return ParseError.LabelDefExpected;
+
+    for (labels.items(.token)) |label_token| {
+        if (label_token.kind == .labelDef and label_token.id == current.id)
+            return true;
+    }
+    return false;
+}
+
+fn submitLabel() ParseError!void {
+    switch (token.kind) {
+        .labelDef => {
+            if (try labelDefExists())
+                return ParseError.LabelDefinedAlready;
+        },
+        .label => {},
+        else => return ParseError.UnexpectedToken,
+    }
+
+    labels.append(a, .{
+        .token = token,
+        .idx = tokenizer.tokens.len - 1,
+    }) catch @panic("hogehgoe");
+}
+
 fn labelDef(reader: anytype) ParseError!void {
-    tokenizer
-        .token = nextToken(reader);
+    try submitLabel();
+    token = nextToken(reader);
     token = try nextTokenExpect(reader, .newline);
 }
 
@@ -281,8 +306,13 @@ fn program(reader: anytype) ParseError!void {
     };
 }
 
+fn init() void {
+    labels.clearAndFree(a);
+    tokenizer.init();
+}
+
 fn parse(reader: anytype) ParseError!void {
-    tokenizer.init(); // clear 'tokens' and '_ch'
+    init();
     token = nextToken(reader);
     try program(reader);
     //std.debug.print("len: {d}\n", .{tokenizer.tokens.len});
