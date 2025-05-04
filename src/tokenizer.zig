@@ -20,99 +20,50 @@ pub fn testTokenizerInit() void {
     _ch = ' ';
 }
 
-pub const TokenKindTag = enum {
-    register,
-    instruction,
-    macro,
-    number,
-    character,
+pub const TokenKind = enum {
     label,
-};
+    labelDef,
+    numberLiteral,
+    //decLiteral,
+    //hexLiteral,
+    comma,
+    ip,
+    flag,
+    sp,
+    fp,
+    gr0,
+    gr1,
+    push,
+    pop,
+    add,
+    sub,
+    mul,
+    div,
+    and_,
+    or_,
+    xor,
+    shl,
+    ld,
+    cmp,
+    jmp,
+    jg,
+    jz,
+    jl,
+    call,
+    ret,
+    mov,
+    nop,
+    newline,
+    eof,
+    sqbrac_l,
+    sqbrac_r,
 
-pub const TokenKind = union(TokenKindTag) {
-    register: Register,
-    instruction: Instruction,
-    macro: Macro,
-    number: Number,
-    character: Character,
-    label: Label,
-
-    const Label = enum {
-        def,
-        slot,
-    };
-
-    const Register = enum {
-        ip,
-        flag,
-        sp,
-        fp,
-        gr0,
-        gr1,
-    };
-
-    const Number = enum {
-        dec,
-        hex,
-    };
-
-    const Instruction = enum {
-        push,
-        pop,
-        add,
-        sub,
-        mul,
-        div,
-        and_,
-        or_,
-        xor,
-        shl,
-        ld,
-        cmp,
-        jmp,
-        jg,
-        jz,
-        jl,
-    };
-
-    const Macro = enum {
-        call,
-        ret,
-        mov,
-        nop,
-    };
-
-    const Character = enum {
-        comma,
-        newline,
-        sqbrac_l,
-        sqbrac_r,
-        eof,
-    };
-
-    // instruction
-    // macro
-    // register
     pub fn get(buf: []const u8) ?TokenKind {
-        const str2enum = std.meta.stringToEnum;
-
-        var kind: TokenKind = undefined;
-
-        if (str2enum(Macro, buf)) |macro| {
-            kind.macro = macro;
-        } else if (str2enum(Instruction, buf)) |instruction| {
-            kind.instruction = instruction;
-        } else if (str2enum(Register, buf)) |register| {
-            kind.register = register;
-        } else {
+        return std.meta.stringToEnum(TokenKind, buf) orelse blk: {
             var tmp = [_]u8{'_'} ** MAX_IDENT_LEN;
             std.mem.copyForwards(u8, &tmp, buf);
-
-            if (str2enum(Instruction, tmp[0 .. buf.len + 1])) |instruction|
-                kind.instruction = instruction;
-        }
-
-        return kind;
+            break :blk std.meta.stringToEnum(TokenKind, tmp[0 .. buf.len + 1]);
+        };
     }
 };
 
@@ -143,17 +94,22 @@ const CharKind = enum {
     }
 };
 
+const hash_fn = std.hash.RapidHash.hash;
+const HashType: type = @typeInfo(@TypeOf(hash_fn)).@"fn".return_type.?;
+
 pub const Token = struct {
     kind: TokenKind,
     id: ?HashType, // nullable
-
-    const hash_fn = std.hash.RapidHash.hash;
-    const HashType: type = @typeInfo(@TypeOf(hash_fn)).@"fn".return_type.?;
 
     pub fn hash(input: []const u8) HashType {
         const hash_key = 0xdeadbeef;
         return hash_fn(hash_key, input);
     }
+};
+
+pub const Label = struct {
+    hash: HashType,
+    idx: usize,
 };
 
 const Tokens: type = std.MultiArrayList(Token);
@@ -210,15 +166,14 @@ pub fn nextToken(reader: anytype) Token {
 
     switch (CharKind.get(ch)) {
         .digit => {
-            //kind = .numberLiteral;
-            kind.number = .dec;
+            kind = .numberLiteral;
+            //kind = .decLiteral;
             if (ch == '0') {
                 i += 1;
                 ch = nextChar(reader);
 
                 if (ch == 'x') {
                     //kind = .hexLiteral;
-                    kind.number = .hex;
                     i += 1;
                     ch = nextChar(reader);
                     while (isHex(ch)) {
@@ -249,30 +204,30 @@ pub fn nextToken(reader: anytype) Token {
             if (TokenKind.get(buf[0..i])) |_kind| {
                 kind = _kind;
             } else if (ch == ':') {
-                kind.label = .def;
+                kind = .labelDef;
                 ch = nextChar(reader);
             } else {
-                kind.label = .slot;
+                kind = .label;
             }
         },
         .newline => {
-            kind.character = .newline;
+            kind = .newline;
             ch = nextChar(reader);
         },
         .comma => {
-            kind.character = .comma;
+            kind = .comma;
             ch = nextChar(reader);
         },
         .sqbrac_l => {
-            kind.character = .sqbrac_l;
+            kind = .sqbrac_l;
             ch = nextChar(reader);
         },
         .sqbrac_r => {
-            kind.character = .sqbrac_r;
+            kind = .sqbrac_r;
             ch = nextChar(reader);
         },
         .eof => {
-            kind.character = .eof;
+            kind = .eof;
         },
         else => {
             dbgprint("|{c}|{x}|\n", .{ ch, ch });
@@ -283,15 +238,10 @@ pub fn nextToken(reader: anytype) Token {
     const token = Token{
         .kind = kind,
         .id = switch (kind) {
-            .number => num,
-            .label => Token.hash(buf[0..i]),
+            .numberLiteral => num,
+            .label, .labelDef => Token.hash(buf[0..i]),
             else => null,
         },
-        //.id = switch (kind) {
-        //    .numberLiteral => num,
-        //    .label, .labelDef => Token.hash(buf[0..i]),
-        //    else => null,
-        //},
     };
 
     tokens.append(a, token) catch @panic("aaaaaa");
@@ -323,24 +273,22 @@ test "letter" {
         try std.testing.expect(!isLetter(@intCast(letter)));
 }
 
-// TODO: test macros and characters
-
 test "token kind" {
-    const pass_cases = [_]TestCase(TokenKind.Instruction){
+    const pass_cases = [_]TestCase(TokenKind){
         .{ "and", .and_ },
         .{ "or", .or_ },
         .{ "ld", .ld },
         .{ "xor", .xor },
-        //.{ "call", .call },
-        //.{ "[", .sqbrac_l },
-        //.{ "]", .sqbrac_r },
+        .{ "call", .call },
+        .{ "[", .sqbrac_l },
+        .{ "]", .sqbrac_r },
     };
 
     for (pass_cases) |case| {
         defer testTokenizerInit();
         const input, const kind = case;
         if (TokenKind.get(input)) |_kind|
-            try std.testing.expect(_kind.instruction == kind);
+            try std.testing.expect(_kind == kind);
     }
 }
 
@@ -350,13 +298,13 @@ test "TokenKind accept all keywords" {
 }
 
 test "number literal" {
-    const Expected = .{ TokenKind.Number, u32 };
+    const Expected = .{ TokenKind, u32 };
     const pass_cases = [_]TestCase(Expected){
-        .{ "0x10 ", .{ .hex, 0x10 } },
-        .{ "0x10", .{ .hex, 0x10 } },
-        .{ "0", .{ .dec, 0 } },
-        .{ "10", .{ .dec, 10 } },
-        .{ "20000", .{ .dec, 20000 } },
+        .{ "0x10 ", .{ .numberLiteral, 0x10 } },
+        .{ "0x10", .{ .numberLiteral, 0x10 } },
+        .{ "0", .{ .numberLiteral, 0 } },
+        .{ "10", .{ .numberLiteral, 10 } },
+        .{ "20000", .{ .numberLiteral, 20000 } },
     };
     for (pass_cases) |case| {
         defer testTokenizerInit();
@@ -367,16 +315,16 @@ test "number literal" {
         const reader = stream.reader();
         const token = nextToken(reader);
 
-        try std.testing.expect(token.kind.number == kind);
+        try std.testing.expect(token.kind == kind);
         try std.testing.expect(token.id == val);
     }
 }
 
 test "identifier" {
-    const Expected = .{ []const u8, TokenKind.Label };
+    const Expected = .{ []const u8, TokenKind };
     const pass_cases = [_]TestCase(Expected){
-        .{ "hoge", .{ "hoge", .slot } },
-        .{ "hoge:", .{ "hoge", .def } },
+        .{ "hoge", .{ "hoge", .label } },
+        .{ "hoge:", .{ "hoge", .labelDef } },
     };
 
     const hoge = u8;
@@ -386,12 +334,11 @@ test "identifier" {
         defer testTokenizerInit();
         const input, const expected = case;
         const exptd_str, const kind = expected;
-        //
         var stream = fbs(input);
         const reader = stream.reader();
         const token = nextToken(reader);
 
-        try std.testing.expect(token.kind.label == kind);
+        try std.testing.expect(token.kind == kind);
         try std.testing.expect(Token.hash(exptd_str) == token.id);
     }
 }
@@ -399,12 +346,12 @@ test "identifier" {
 test "trailing identifier" {
     const Expected = .{
         []const []const u8, // tokenized identifiers
-        []const TokenKind.Label,
+        []const TokenKind,
     };
     // this fails: const pass_cases: []TestCase = .{ hogehoge };
     const pass_cases = [_]TestCase(Expected){
-        .{ "trailing identifier ", .{ &.{ "trailing", "identifier" }, &.{ .slot, .slot } } },
-        .{ "trailing: identifier ", .{ &.{ "trailing", "identifier" }, &.{ .def, .slot } } },
+        .{ "trailing identifier ", .{ &.{ "trailing", "identifier" }, &.{ .label, .label } } },
+        .{ "trailing: identifier ", .{ &.{ "trailing", "identifier" }, &.{ .labelDef, .label } } },
     };
 
     for (pass_cases) |case| {
@@ -416,7 +363,7 @@ test "trailing identifier" {
 
         for (kinds, strs) |kind, exptd_str| {
             const token = nextToken(reader);
-            try std.testing.expect(token.kind.label == kind);
+            try std.testing.expect(token.kind == kind);
             try std.testing.expect(Token.hash(exptd_str) == token.id.?);
         }
     }
@@ -437,10 +384,10 @@ test "program" {
     var stream = fbs(program_str);
     const reader = stream.reader();
     var token = nextToken(reader);
-    while (token.kind.character != .eof) {
+    while (token.kind != .eof) {
         switch (token.kind) {
-            .number => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
-            .label => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
             else => {},
         }
         token = nextToken(reader);
@@ -459,46 +406,39 @@ test "program2" {
     var stream = fbs(program_str);
     const reader = stream.reader();
     var token = nextToken(reader);
-    while (token.kind.character != .eof) {
+    while (token.kind != .eof) {
         switch (token.kind) {
-            .number => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
-            .label => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
             else => {},
         }
         token = nextToken(reader);
     }
 }
 
-//test "and instruction" {
-//    const program_str =
-//        \\and gr0, 1
-//        \\
-//    ;
-//    const Expected = []const TokenKind;
-//    const pass_cases = [_]TestCase(Expected){
-//        .{ program_str, &.{
-//            .Instruction.and_,
-//            .Register.gr0,
-//            .Character.comma,
-//            .Number.dec,
-//            .Character.newline,
-//            .Character.eof,
-//        } },
-//    };
-//
-//    var stream = fbs(program_str);
-//    const reader = stream.reader();
-//    for (pass_cases) |case| {
-//        defer testTokenizerInit();
-//        _, const expected = case;
-//
-//        for (expected) |kind| {
-//            const token = nextToken(reader);
-//            dbgprint("e: {}, a: {}\n", .{ kind, token.kind });
-//            try std.testing.expect(token.kind == kind);
-//        }
-//    }
-//}
+test "and instruction" {
+    const program_str =
+        \\and gr0, 1 
+        \\
+    ;
+    const Expected = []const TokenKind;
+    const pass_cases = [_]TestCase(Expected){
+        .{ program_str, &.{ .and_, .gr0, .comma, .numberLiteral, .newline, .eof } },
+    };
+
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    for (pass_cases) |case| {
+        defer testTokenizerInit();
+        _, const expected = case;
+
+        for (expected) |kind| {
+            const token = nextToken(reader);
+            dbgprint("e: {}, a: {}\n", .{ kind, token.kind });
+            try std.testing.expect(token.kind == kind);
+        }
+    }
+}
 
 const std = @import("std");
 const property = @import("property.zig");
