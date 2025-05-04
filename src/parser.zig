@@ -395,6 +395,16 @@ test "and instruction fail" {
     try expectError(ParseError.UnexpectedToken, parse(reader));
 }
 
+test "call" {
+    const program_str =
+        \\call ddd
+    ;
+    var stream = fbs(program_str);
+    const reader = stream.reader();
+    try parse(reader);
+    //try expectError(ParseError.UnexpectedToken, parse(reader));
+}
+
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
 const generator = @import("generator.zig");
