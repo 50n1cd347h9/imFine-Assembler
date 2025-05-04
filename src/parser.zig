@@ -3,6 +3,12 @@
 //!
 //! Every function don't call nextToken() before read token first time except program()
 //! Every function that read token call nextToken() at the end.
+//!
+
+var labels = Labels{};
+var buffer = [_]u8{0} ** 0x1000;
+var fba = std.heap.FixedBufferAllocator.init(&buffer);
+const a = fba.allocator();
 
 var token: Token = undefined;
 
@@ -19,6 +25,12 @@ const ParseError = error{
     CannotPopIntoImmediate,
     UnexpectedToken,
 };
+
+pub const Label = struct {
+    token: Token,
+    idx: usize,
+};
+const Labels: type = std.MultiArrayList(Label);
 
 /// return nextToken() if token kind actual == expected
 fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
@@ -46,7 +58,8 @@ fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
 //}
 
 fn labelDef(reader: anytype) ParseError!void {
-    token = nextToken(reader);
+    tokenizer
+        .token = nextToken(reader);
     token = try nextTokenExpect(reader, .newline);
 }
 
@@ -174,10 +187,9 @@ fn macroRet(reader: anytype) ParseError!void {
 fn macroCall(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1 => {},
-        //.numberLiteral => {
-        //    _ = token.val();
-        //},
-        .label => {},
+        .label => {
+            _ = 0;
+        },
         else => return ParseError.UnexpectedToken,
     }
     token = nextToken(reader);

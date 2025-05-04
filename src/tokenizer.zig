@@ -107,11 +107,6 @@ pub const Token = struct {
     }
 };
 
-pub const Label = struct {
-    hash: HashType,
-    idx: usize,
-};
-
 const Tokens: type = std.MultiArrayList(Token);
 
 fn isRegister(token: []const u8) bool {
