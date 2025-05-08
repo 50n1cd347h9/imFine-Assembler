@@ -159,30 +159,31 @@ pub fn nextToken(reader: anytype) Token {
     while (ch == ' ' or ch == '\t')
         ch = nextChar(reader);
 
-    switch (CharKind.get(ch)) {
+    sw: switch (CharKind.get(ch)) {
         .digit => {
             kind = .numberLiteral;
-            //kind = .decLiteral;
-            if (ch == '0') {
-                i += 1;
-                ch = nextChar(reader);
 
-                if (ch == 'x') {
-                    //kind = .hexLiteral;
-                    i += 1;
-                    ch = nextChar(reader);
-                    while (isHex(ch)) {
-                        num = num * 16 + (ch - '0');
-                        i += 1;
-                        ch = nextChar(reader);
-                    }
-                }
-            } else {
+            if (ch != '0') {
                 while (isDigit(ch)) {
                     num = num * 10 + (ch - '0');
                     i += 1;
                     ch = nextChar(reader);
                 }
+                break :sw;
+            }
+
+            i += 1;
+            ch = nextChar(reader);
+            if (ch != 'x')
+                break :sw;
+
+            // '0x'
+            i += 1;
+            ch = nextChar(reader);
+            while (isHex(ch)) {
+                num = num * 16 + (ch - '0');
+                i += 1;
+                ch = nextChar(reader);
             }
         },
         .letter => {
@@ -198,12 +199,16 @@ pub fn nextToken(reader: anytype) Token {
 
             if (TokenKind.get(buf[0..i])) |_kind| {
                 kind = _kind;
-            } else if (ch == ':') {
+                break :sw;
+            }
+
+            if (ch == ':') {
                 kind = .labelDef;
                 ch = nextChar(reader);
-            } else {
-                kind = .label;
+                break :sw;
             }
+
+            kind = .label;
         },
         .newline => {
             kind = .newline;
