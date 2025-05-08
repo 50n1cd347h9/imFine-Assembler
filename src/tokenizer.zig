@@ -148,10 +148,14 @@ fn nextChar(reader: anytype) u8 {
     return reader.readByte() catch EOF;
 }
 
+inline fn asciiToInt(ch: u8) u32 {
+    return ch - '0';
+}
+
 pub fn nextToken(reader: anytype) Token {
     var kind: TokenKind = undefined;
     var num: u32 = 0;
-    var buf: [MAX_IDENT_LEN]u8 = [_]u8{0} ** MAX_IDENT_LEN;
+    var buf = [_]u8{0} ** MAX_IDENT_LEN;
     var i: usize = 0;
     var ch = _ch;
     defer _ch = ch;
@@ -165,7 +169,7 @@ pub fn nextToken(reader: anytype) Token {
 
             if (ch != '0') {
                 while (isDigit(ch)) {
-                    num = num * 10 + (ch - '0');
+                    num = num * 10 + asciiToInt(ch);
                     i += 1;
                     ch = nextChar(reader);
                 }
@@ -197,6 +201,7 @@ pub fn nextToken(reader: anytype) Token {
                 ch = nextChar(reader);
             }
 
+            // Register, Instruction or Macro
             if (TokenKind.get(buf[0..i])) |_kind| {
                 kind = _kind;
                 break :sw;
