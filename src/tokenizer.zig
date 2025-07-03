@@ -98,8 +98,8 @@ const hash_fn = std.hash.RapidHash.hash;
 const HashType: type = @typeInfo(@TypeOf(hash_fn)).@"fn".return_type.?;
 
 pub const Token = struct {
-    kind: TokenKind,
-    id: ?HashType, // nullable
+    kind: TokenKind = .eof,
+    id: HashType = 0,
 
     pub fn hash(input: []const u8) HashType {
         const hash_key = 0xdeadbeef;
@@ -245,7 +245,7 @@ pub fn nextToken(reader: anytype) Token {
         .id = switch (kind) {
             .numberLiteral => num,
             .label, .labelDef => Token.hash(buf[0..i]),
-            else => null,
+            else => 0,
         },
     };
 
@@ -369,7 +369,7 @@ test "trailing identifier" {
         for (kinds, strs) |kind, exptd_str| {
             const token = nextToken(reader);
             try std.testing.expect(token.kind == kind);
-            try std.testing.expect(Token.hash(exptd_str) == token.id.?);
+            try std.testing.expect(Token.hash(exptd_str) == token.id);
         }
     }
 }
@@ -391,8 +391,8 @@ test "program" {
     var token = nextToken(reader);
     while (token.kind != .eof) {
         switch (token.kind) {
-            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
-            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id, token.kind }),
+            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id, token.kind }),
             else => {},
         }
         token = nextToken(reader);
@@ -413,8 +413,8 @@ test "program2" {
     var token = nextToken(reader);
     while (token.kind != .eof) {
         switch (token.kind) {
-            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
-            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id.?, token.kind }),
+            .numberLiteral => dbgprint("{d: <9} {}\n", .{ token.id, token.kind }),
+            .label, .labelDef => dbgprint("{d: <9} {}\n", .{ token.id, token.kind }),
             else => {},
         }
         token = nextToken(reader);
