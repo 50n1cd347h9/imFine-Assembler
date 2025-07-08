@@ -91,7 +91,7 @@ fn labelDef(reader: anytype) ParseError!void {
 fn memoryReference(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
-            _ = 0; // do something
+            _ = 0; // TODO: do something
         },
         .numberLiteral => _ = token.id,
         .sqbrac_r => return ParseError.UnexpectedCloseBracket,
@@ -121,8 +121,8 @@ fn insPush(reader: anytype) ParseError!void {
 
 fn insPop(reader: anytype) ParseError!void {
     switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {
-            _ = 1; //do something
+        .gr0, .gr1 => {
+            _ = 1; // TODO: do something
         },
         .sqbrac_l => {
             token = nextToken(reader);
@@ -188,19 +188,11 @@ fn insCmp(reader: anytype) ParseError!void {
     token = nextToken(reader);
 }
 
+// TODO: jg, jl, jz etc.
 fn insJmp(reader: anytype) ParseError!void {
     switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {},
+        .gr0, .gr1 => {},  // TODO: implement
         else => return error.RegisterExpected,
-    }
-    token = nextToken(reader);
-    token = try nextTokenExpect(reader, .comma);
-    switch (token.kind) {
-        .gr0, .gr1, .sp, .fp, .flag, .ip => {},
-        .numberLiteral => {
-            _ = token.id;
-        },
-        else => return ParseError.UnexpectedToken,
     }
     token = nextToken(reader);
 }
@@ -220,9 +212,11 @@ fn macroCall(reader: anytype) ParseError!void {
     token = nextToken(reader);
 }
 
+// 1st operand: dst
+// 2nd operand: src
 fn macroMov(reader: anytype) ParseError!void {
     switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {},
+        .gr0, .gr1 => {}, // TODO
         .sqbrac_l => {
             token = nextToken(reader);
             try memoryReference(reader);
