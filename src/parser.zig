@@ -11,6 +11,8 @@ var fba = std.heap.FixedBufferAllocator.init(&buffer);
 const a = fba.allocator();
 
 var token: Token = undefined;
+var code: Code = Code.init();
+var encoder: Encoder = undefined;
 
 const ParseError = error{
     CommaExpected,
@@ -33,6 +35,41 @@ pub const Label = struct {
     idx: usize,
 };
 const Labels: type = std.MultiArrayList(Label);
+
+// emit parsed instruction
+fn emit() void {
+    // do nothing
+    //if (!encoder.isInitialized())
+    //    return;
+
+    try encoder.emitCode(&code);
+}
+
+fn regstr2Num(comptime reg: []const u8) u3 {
+    for (consts.registers, 0..) |_reg, i| {
+        if (std.mem.eql(u8, reg, _reg))
+            return @as(u3, @intCast(i));
+    } else @panic("aajfdkas;");
+}
+
+fn getRegNum(reg: TokenKind) ParseError!u3 {
+    return switch (reg) {
+        .ip => regstr2Num("ip"),
+        .sp => regstr2Num("sp"),
+        .fp => regstr2Num("fp"),
+        .flag => regstr2Num("flag"),
+        .gr0 => regstr2Num("gr0"),
+        .gr1 => regstr2Num("gr1"),
+        else => ParseError.RegisterExpected,
+    };
+}
+
+fn getOpcode(comptime inst: []const u8) u6 {
+    for (consts.instructions, 0..) |_inst, i| {
+        if (std.mem.eql(u8, inst, _inst))
+            return @as(u6, @intCast(i));
+    } else @panic("ghoe");
+}
 
 /// return nextToken() if token kind actual == expected
 fn nextTokenExpect(reader: anytype, expected: TokenKind) ParseError!Token {
@@ -88,12 +125,19 @@ fn labelDef(reader: anytype) ParseError!void {
     token = try nextTokenExpect(reader, .newline);
 }
 
+// Memory reference is always second operand.
 fn memoryReference(reader: anytype) ParseError!void {
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
-            _ = 0; // TODO: do something
+            code.len = @intFromEnum(Code.Len.bit1);
+            code.ext = @intFromEnum(Code.Ext.ref_reg);
+            code.imm_reg = try getRegNum(token.kind);
         },
-        .numberLiteral => _ = token.id,
+        .numberLiteral => {
+            code.len = @intFromEnum(Code.Len.bit32);
+            code.ext = @intFromEnum(Code.Ext.ref_imm);
+            code.imm_reg = token.id;
+        },
         .sqbrac_r => return ParseError.UnexpectedCloseBracket,
         else => return ParseError.RegisterExpected,
     }
@@ -103,12 +147,16 @@ fn memoryReference(reader: anytype) ParseError!void {
 }
 
 fn insPush(reader: anytype) ParseError!void {
+    code.opcode = getOpcode("push");
+
     switch (token.kind) {
-        .gr0, .gr1, .sp, .fp => {
-            _ = 0; // do something
+        .ip, .sp, .fp, .gr0, .gr1 => {
+            code.len = @intFromEnum(Code.Len.bit1);
+            code.imm_reg = try getRegNum(token.kind);
         },
         .numberLiteral => {
-            _ = token.id;
+            code.len = @intFromEnum(Code.Len.bit32); // TODO: select len
+            code.imm_reg = token.id;
         },
         .sqbrac_l => {
             token = nextToken(reader);
@@ -191,7 +239,7 @@ fn insCmp(reader: anytype) ParseError!void {
 // TODO: jg, jl, jz etc.
 fn insJmp(reader: anytype) ParseError!void {
     switch (token.kind) {
-        .gr0, .gr1 => {},  // TODO: implement
+        .gr0, .gr1 => {}, // TODO: implement
         else => return error.RegisterExpected,
     }
     token = nextToken(reader);
@@ -295,7 +343,10 @@ fn program(reader: anytype) ParseError!void {
             .newline => token = nextToken(reader),
             .labelDef => try labelDef(reader),
             .eof => break,
-            else => try instruction(reader),
+            else => {
+                code = Code.init();
+                try instruction(reader);
+            },
         }
     };
 }
@@ -303,6 +354,7 @@ fn program(reader: anytype) ParseError!void {
 fn init() void {
     labels.clearAndFree(a);
     tokenizer.init();
+    encoder = Encoder.init();
 }
 
 fn parse(reader: anytype) ParseError!void {
@@ -442,12 +494,18 @@ test "call" {
 }
 
 const std = @import("std");
+const consts = @import("consts.zig");
+
 const tokenizer = @import("tokenizer.zig");
-const generator = @import("generator.zig");
-const property = @import("property.zig");
 const Token = tokenizer.Token;
 const TokenKind = tokenizer.TokenKind;
 const nextToken = tokenizer.nextToken;
+
+const Encoder = @import("encoder.zig");
+const Code = Encoder.Code;
+
+const property = @import("property.zig");
+
 const fbs = std.io.fixedBufferStream;
 const dbgprint = std.debug.print;
 const panic = std.debug.panic;
