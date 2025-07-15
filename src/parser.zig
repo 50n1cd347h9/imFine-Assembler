@@ -42,7 +42,7 @@ fn emit() void {
     //if (!encoder.isInitialized())
     //    return;
 
-    try encoder.emitCode(&code);
+    encoder.emitCode(&code);
 }
 
 fn regstr2Num(comptime reg: []const u8) u3 {
@@ -127,22 +127,24 @@ fn labelDef(reader: anytype) ParseError!void {
 
 // Memory reference is always second operand.
 fn memoryReference(reader: anytype) ParseError!void {
+    std.debug.print("@memoryReference: {}\n", .{token.kind});
+
     switch (token.kind) {
         .gr0, .gr1, .sp, .fp => {
-            code.len = @intFromEnum(Code.Len.bit1);
-            code.ext = @intFromEnum(Code.Ext.ref_reg);
+            code.len = Code.Len.bit8;
+            code.ext = Code.Ext.ref_reg;
             code.imm_reg = try getRegNum(token.kind);
         },
         .numberLiteral => {
-            code.len = @intFromEnum(Code.Len.bit32);
-            code.ext = @intFromEnum(Code.Ext.ref_imm);
+            code.len = Code.Len.bit32;
+            code.ext = Code.Ext.ref_imm;
             code.imm_reg = token.id;
         },
         .sqbrac_r => return ParseError.UnexpectedCloseBracket,
         else => return ParseError.RegisterExpected,
     }
 
-    token = nextToken(reader);
+    token = nextToken(reader); // read sqbrac_r
     token = try nextTokenExpect(reader, .sqbrac_r);
 }
 
@@ -151,11 +153,13 @@ fn insPush(reader: anytype) ParseError!void {
 
     switch (token.kind) {
         .ip, .sp, .fp, .gr0, .gr1 => {
-            code.len = @intFromEnum(Code.Len.bit1);
+            code.len = Code.Len.bit8;
+            code.ext = Code.Ext.reg;
             code.imm_reg = try getRegNum(token.kind);
         },
         .numberLiteral => {
-            code.len = @intFromEnum(Code.Len.bit32); // TODO: select len
+            code.len = Code.Len.bit32; // TODO: select len
+            code.ext = Code.Ext.imm;
             code.imm_reg = token.id;
         },
         .sqbrac_l => {
@@ -165,12 +169,19 @@ fn insPush(reader: anytype) ParseError!void {
         else => return ParseError.RegisterExpected,
     }
     token = nextToken(reader);
+    std.debug.print("@insPush: {}\n", .{token.kind});
 }
 
 fn insPop(reader: anytype) ParseError!void {
+    code.opcode = getOpcode("pop");
+
     switch (token.kind) {
+        // ip and flag is read-only.
+        // fp, sp cannot be popped into.
         .gr0, .gr1 => {
-            _ = 1; // TODO: do something
+            code.len = Code.Len.bit8;
+            code.ext = Code.Ext.reg;
+            code.imm_reg = try getRegNum(token.kind);
         },
         .sqbrac_l => {
             token = nextToken(reader);
@@ -179,7 +190,6 @@ fn insPop(reader: anytype) ParseError!void {
         .numberLiteral => return ParseError.CannotPopIntoImmediate,
         else => return ParseError.RegisterExpected,
     }
-    token = nextToken(reader);
 }
 
 fn insAdd(reader: anytype) ParseError!void {
@@ -196,7 +206,6 @@ fn insAdd(reader: anytype) ParseError!void {
         },
         else => return ParseError.UnexpectedToken,
     }
-    token = nextToken(reader);
 }
 
 fn insDiv(reader: anytype) ParseError!void {
@@ -213,7 +222,6 @@ fn insDiv(reader: anytype) ParseError!void {
         },
         else => return ParseError.UnexpectedToken,
     }
-    token = nextToken(reader);
 }
 
 fn insCmp(reader: anytype) ParseError!void {
@@ -233,16 +241,15 @@ fn insCmp(reader: anytype) ParseError!void {
         },
         else => return ParseError.UnexpectedToken,
     }
-    token = nextToken(reader);
 }
 
 // TODO: jg, jl, jz etc.
 fn insJmp(reader: anytype) ParseError!void {
+    _ = reader;
     switch (token.kind) {
         .gr0, .gr1 => {}, // TODO: implement
         else => return error.RegisterExpected,
     }
-    token = nextToken(reader);
 }
 
 fn macroRet(reader: anytype) ParseError!void {
@@ -250,6 +257,7 @@ fn macroRet(reader: anytype) ParseError!void {
 }
 
 fn macroCall(reader: anytype) ParseError!void {
+    _ = reader;
     switch (token.kind) {
         .gr0, .gr1 => {},
         .label => {
@@ -257,7 +265,6 @@ fn macroCall(reader: anytype) ParseError!void {
         },
         else => return ParseError.UnexpectedToken,
     }
-    token = nextToken(reader);
 }
 
 // 1st operand: dst
@@ -284,7 +291,6 @@ fn macroMov(reader: anytype) ParseError!void {
         },
         else => return ParseError.UnexpectedToken,
     }
-    token = nextToken(reader);
 }
 
 // TODO: handle macro e.g. call, ret, mov
@@ -328,12 +334,17 @@ fn instruction(reader: anytype) ParseError!void {
             try macroMov(reader);
         },
         //.nop => {},
-        else => return error.InstructionExpected,
+        else => return ParseError.InstructionExpected,
     }
+
+    token = nextToken(reader); // Read newline or eof.
 
     switch (token.kind) {
         .newline, .eof => token = nextToken(reader),
-        else => return ParseError.UnexpectedToken,
+        else => {
+            std.debug.print("@instruction: {}\n", .{token.kind});
+            return ParseError.UnexpectedToken;
+        },
     }
 }
 
@@ -346,6 +357,7 @@ fn program(reader: anytype) ParseError!void {
             else => {
                 code = Code.init();
                 try instruction(reader);
+                emit();
             },
         }
     };
@@ -368,7 +380,7 @@ fn parse(reader: anytype) ParseError!void {
 test "and instruction" {
     const program_str =
         \\and gr0, 1 
-        \\
+        \\and gr0, 1
     ;
     var stream = fbs(program_str);
     const reader = stream.reader();
@@ -493,6 +505,73 @@ test "call" {
     //try expectError(ParseError.UnexpectedToken, parse(reader));
 }
 
+fn testParse(prog_str: []const u8) !void {
+    var stream = fbs(prog_str);
+    const reader = stream.reader();
+    try parse(reader);
+}
+
+test "push" {
+    std.debug.print("!push!\n", .{});
+    const test_str =
+        \\push [0x1]
+        \\push [gr1]
+        //\\push gr0
+        //\\push 100
+    ;
+    try testParse(test_str);
+
+    //try expectEqual(encoder.codes.slice().len, 4);
+    //var elem = encoder.codes.pop();
+    //try expectEqual(
+    //    elem,
+    //    Code{
+    //        .opcode = getOpcode("push"),
+    //        .ext = Code.Ext.imm,
+    //        .len = Code.Len.bit32,
+    //        .reg = 0,
+    //        .padding = 0,
+    //        .imm_reg = 100,
+    //    },
+    //);
+    //elem = encoder.codes.pop();
+    //try expectEqual(
+    //    elem,
+    //    Code{
+    //        .opcode = getOpcode("push"),
+    //        .ext = Code.Ext.reg,
+    //        .len = Code.Len.bit8,
+    //        .reg = 0,
+    //        .padding = 0,
+    //        .imm_reg = @intCast(try getRegNum(.gr0)),
+    //    },
+    //);
+    //elem = encoder.codes.pop();
+    //try expectEqual(
+    //    elem,
+    //    Code{
+    //        .opcode = getOpcode("push"),
+    //        .ext = Code.Ext.ref_reg,
+    //        .len = Code.Len.bit8,
+    //        .reg = 0,
+    //        .padding = 0,
+    //        .imm_reg = @intCast(try getRegNum(.gr1)),
+    //    },
+    //);
+    //elem = encoder.codes.pop();
+    //try expectEqual(
+    //    elem,
+    //    Code{
+    //        .opcode = getOpcode("push"),
+    //        .ext = Code.Ext.ref_imm,
+    //        .len = Code.Len.bit8,
+    //        .reg = 0,
+    //        .padding = 0,
+    //        .imm_reg = 0x1,
+    //    },
+    //);
+}
+
 const std = @import("std");
 const consts = @import("consts.zig");
 
@@ -511,3 +590,4 @@ const dbgprint = std.debug.print;
 const panic = std.debug.panic;
 const expect = std.testing.expect;
 const expectError = std.testing.expectError;
+const expectEqual = std.testing.expectEqual;

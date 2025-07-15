@@ -2,8 +2,8 @@ const Self: type = @This();
 
 pub const Code: type = struct {
     opcode: u6,
-    ext: u2,
-    len: u3,
+    ext: Ext,
+    len: Len,
     reg: u3,
     padding: u2,
     imm_reg: u128,
@@ -27,8 +27,8 @@ pub const Code: type = struct {
     pub fn init() Code {
         return Code{
             .opcode = 0,
-            .ext = 0,
-            .len = 0,
+            .ext = Ext.imm,
+            .len = Len.bit0,
             .reg = 0,
             .padding = 0,
             .imm_reg = 0,
@@ -51,12 +51,14 @@ pub fn init() Self {
     };
 }
 
-pub fn isInitalized(self: Self) bool {
+pub fn isInitalized(self: *Self) bool {
     return self.initialized;
 }
 
-pub fn emitCode(self: Self, code: *Code) !void {
-    self.codes.append(a, code) catch @panic("error @ emitCode");
+pub fn emitCode(self: *Self, code: *Code) void {
+    self.codes.append(a, code.*) catch @panic("error @ emitCode");
 }
+
+pub fn encode() void {}
 
 const std = @import("std");
